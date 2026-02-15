@@ -1,6 +1,7 @@
 import { getDatabase, saveDatabase } from '../database/init.js'
 import axios from 'axios'
 import { loadProxyList, parseProxyConfig } from '../utils/proxy.js'
+import { getProxySettings } from '../utils/proxy-settings.js'
 
 export class AccountSyncError extends Error {
   constructor(message, status = 500) {
@@ -31,39 +32,25 @@ const pickProxyFromList = (proxies = []) => {
   return proxies[index] || null
 }
 
-const pickProxyFromEnv = () => {
-  const candidates = [
-    process.env.CHATGPT_PROXY_URL,
-    process.env.CHATGPT_PROXY,
-    process.env.ALL_PROXY,
-    process.env.all_proxy,
-    process.env.HTTPS_PROXY,
-    process.env.https_proxy,
-    process.env.HTTP_PROXY,
-    process.env.http_proxy
-  ]
-
-  for (const candidate of candidates) {
-    const normalized = String(candidate || '').trim()
-    if (!normalized) continue
-    const config = parseProxyConfig(normalized)
-    if (config) {
-      return { url: normalized, config }
-    }
-  }
-
-  return null
-}
-
-const resolveRequestProxy = (proxy) => {
+const resolveRequestProxy = async (proxy) => {
   if (proxy === false) return false
 
   const rawString = typeof proxy === 'string' ? String(proxy).trim() : ''
   if (rawString) return rawString
   if (proxy && typeof proxy === 'object') return proxy
 
-  const entry = pickProxyFromList(getDefaultProxyList()) || pickProxyFromEnv()
-  return entry ? entry.url : null
+  const proxySettings = await getProxySettings()
+  if (proxySettings?.stored?.chatgptProxyUrl) {
+    const storedProxy = String(proxySettings.chatgptProxyUrl || '').trim()
+    // Explicitly persisted empty value means "disable outbound proxy".
+    return storedProxy || false
+  }
+
+  const entry = pickProxyFromList(getDefaultProxyList())
+  if (entry) return entry.url
+
+  const envProxy = String(proxySettings?.chatgptProxyUrl || '').trim()
+  return envProxy || null
 }
 
 function mapRowToAccount(row) {
@@ -238,7 +225,7 @@ async function getSocksAgent(proxyUrl, proxyConfigForLog) {
 }
 
 async function requestChatgptText(apiUrl, { method, headers, data, proxy } = {}, logContext = {}) {
-  const resolvedProxy = resolveRequestProxy(proxy)
+  const resolvedProxy = await resolveRequestProxy(proxy)
   const rawProxyUrl = typeof resolvedProxy === 'string' ? String(resolvedProxy).trim() : ''
   const proxyConfig = normalizeProxyConfig(resolvedProxy)
   const socksProxyUrl = proxyConfig && isSocksProxyConfig(proxyConfig)

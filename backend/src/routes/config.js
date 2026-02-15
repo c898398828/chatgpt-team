@@ -2,6 +2,8 @@ import express from 'express'
 import { getTurnstileSettings } from '../utils/turnstile-settings.js'
 import { getFeatureFlags } from '../utils/feature-flags.js'
 import { getChannels } from '../utils/channels.js'
+import { getDatabase } from '../database/init.js'
+import { getFrontendUiSettings } from '../utils/frontend-ui-settings.js'
 
 const router = express.Router()
 
@@ -24,6 +26,7 @@ const getOpenAccountsMaintenanceMessage = () => {
 
 router.get('/runtime', async (req, res) => {
   try {
+    const db = await getDatabase()
     const timezone = process.env.TZ || DEFAULT_TIMEZONE
     const locale = process.env.APP_LOCALE || DEFAULT_LOCALE
     const openAccountsEnabled = isOpenAccountsEnabled()
@@ -31,6 +34,7 @@ router.get('/runtime', async (req, res) => {
     const turnstileSiteKey = String(turnstileSettings.siteKey || '').trim()
     const features = await getFeatureFlags()
     const { list: channelList } = await getChannels()
+    const frontendUi = await getFrontendUiSettings(db, { forceRefresh: true })
     const channels = (channelList || [])
       .filter(channel => channel?.isActive)
       .map(channel => ({
@@ -52,6 +56,8 @@ router.get('/runtime', async (req, res) => {
       turnstileSiteKey: turnstileSiteKey || null,
       features,
       channels,
+      frontendFontKey: frontendUi.fontKey,
+      frontendAdminAvatarKey: frontendUi.adminAvatarKey,
       openAccountsEnabled,
       openAccountsMaintenanceMessage: openAccountsEnabled ? null : getOpenAccountsMaintenanceMessage()
     })

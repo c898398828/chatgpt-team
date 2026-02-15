@@ -2,6 +2,8 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { configService, type AppRuntimeConfig } from '@/services/api'
 import type { Channel } from '@/services/api'
+import { normalizeFrontendFontKey, resolveFrontendFontFamily, type FrontendFontKey } from '@/lib/frontendFonts'
+import { normalizeFrontendAdminAvatarKey, type FrontendAdminAvatarKey } from '@/lib/frontendAvatars'
 
 const DEFAULT_TIMEZONE = 'Asia/Shanghai'
 const DEFAULT_LOCALE = 'zh-CN'
@@ -22,6 +24,8 @@ export const useAppConfigStore = defineStore('app-config', () => {
   const turnstileSiteKey = ref('')
   const turnstileEnabled = ref<boolean | null>(null)
   const channels = ref<Channel[]>([])
+  const frontendFontKey = ref<FrontendFontKey>('system')
+  const frontendAdminAvatarKey = ref<FrontendAdminAvatarKey>('default')
   const openAccountsEnabled = ref(true)
   const openAccountsMaintenanceMessage = ref(DEFAULT_OPEN_ACCOUNTS_MAINTENANCE_MESSAGE)
   const features = ref<FeatureFlags>({
@@ -32,6 +36,7 @@ export const useAppConfigStore = defineStore('app-config', () => {
   })
 
   const resolvedTurnstileSiteKey = computed(() => (turnstileSiteKey.value || FALLBACK_TURNSTILE_SITE_KEY || '').trim())
+  const resolvedFrontendFontFamily = computed(() => resolveFrontendFontFamily(frontendFontKey.value))
   const resolvedTurnstileEnabled = computed(() => {
     if (!resolvedTurnstileSiteKey.value) {
       return false
@@ -76,6 +81,15 @@ export const useAppConfigStore = defineStore('app-config', () => {
     if (Array.isArray(config.channels)) {
       channels.value = config.channels as Channel[]
     }
+    if ('frontendFontKey' in config) {
+      frontendFontKey.value = normalizeFrontendFontKey((config as any).frontendFontKey)
+    }
+    if ('frontendAdminAvatarKey' in config) {
+      frontendAdminAvatarKey.value = normalizeFrontendAdminAvatarKey((config as any).frontendAdminAvatarKey)
+    }
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.setProperty('--app-font-family', resolvedFrontendFontFamily.value)
+    }
   }
 
   const loadConfig = async () => {
@@ -97,10 +111,13 @@ export const useAppConfigStore = defineStore('app-config', () => {
     turnstileSiteKey,
     turnstileEnabled,
     channels,
+    frontendFontKey,
+    frontendAdminAvatarKey,
     openAccountsEnabled,
     openAccountsMaintenanceMessage,
     features,
     resolvedTurnstileSiteKey,
+    resolvedFrontendFontFamily,
     resolvedTurnstileEnabled,
     loadConfig
   }

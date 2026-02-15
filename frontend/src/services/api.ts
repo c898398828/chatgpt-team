@@ -16,7 +16,7 @@ const getApiUrl = () => {
   }
 
   // 开发环境：使用 localhost
-  return 'http://localhost:3000/api'
+  return '/api'
 }
 
 export const API_URL = getApiUrl()
@@ -524,6 +524,8 @@ export interface AccountRecoveryData {
 export interface AppRuntimeConfig {
   timezone: string
   locale: string
+  frontendFontKey?: string | null
+  frontendAdminAvatarKey?: string | null
   turnstileSiteKey?: string | null
   turnstileEnabled?: boolean
   channels?: Channel[]
@@ -1009,6 +1011,24 @@ export interface AdminTelegramSettingsResponse {
   }
 }
 
+export interface AdminProxySettingsResponse {
+  proxy: {
+    chatgptProxyUrl: string
+    chatgptProxyUrlStored?: boolean
+  }
+}
+
+export interface AdminFrontendUiSettingsResponse {
+  ui: {
+    fontKey: string
+    fontKeyStored?: boolean
+    fontOptions?: string[]
+    adminAvatarKey?: string
+    adminAvatarKeyStored?: boolean
+    adminAvatarOptions?: string[]
+  }
+}
+
 export interface RbacMenu {
   id: number
   menuKey: string
@@ -1207,6 +1227,34 @@ export const adminService = {
     }
   }): Promise<AdminTelegramSettingsResponse> {
     const response = await api.put('/admin/telegram-settings', payload)
+    return response.data
+  },
+
+  async getProxySettings(): Promise<AdminProxySettingsResponse> {
+    const response = await api.get('/admin/proxy-settings')
+    return response.data
+  },
+
+  async updateProxySettings(payload: {
+    proxy: {
+      chatgptProxyUrl: string
+    }
+  }): Promise<AdminProxySettingsResponse> {
+    const response = await api.put('/admin/proxy-settings', payload)
+    return response.data
+  },
+
+  async getFrontendUiSettings(): Promise<AdminFrontendUiSettingsResponse> {
+    const response = await api.get('/admin/frontend-ui-settings')
+    return response.data
+  },
+
+  async updateFrontendUiSettings(payload: {
+    ui: {
+      fontKey: string
+    }
+  }): Promise<AdminFrontendUiSettingsResponse> {
+    const response = await api.put('/admin/frontend-ui-settings', payload)
     return response.data
   },
 

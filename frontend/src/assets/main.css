@@ -5,11 +5,30 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: "RuiziShuizhu";
+  src: url("./fonts/锐字云字库水柱体.ttf") format("truetype");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "XindiJinzhong";
+  src: url("./fonts/新蒂金钟体.otf") format("opentype");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "XindiXueshan";
+  src: url("./fonts/新蒂雪山体.otf") format("opentype");
+  font-display: swap;
+}
+
 @layer base {
   /* Apple 设计系统 - 浅色模式 */
   :root {
     --interface-scale: 1;
     font-size: calc(16px * var(--interface-scale));
+    --app-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
 
     /* 背景：Apple 风格的纯白/浅灰 */
     --background: 0 0% 98%;  /* #FAFAFA (apple-gray-50) */
@@ -136,7 +155,7 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-family: var(--app-font-family);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;

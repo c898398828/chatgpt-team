@@ -18,8 +18,16 @@ import {
 import { getZpaySettings, getZpaySettingsFromEnv, invalidateZpaySettingsCache } from '../utils/zpay-settings.js'
 import { getTurnstileSettings, getTurnstileSettingsFromEnv, invalidateTurnstileSettingsCache } from '../utils/turnstile-settings.js'
 import { getTelegramSettings, getTelegramSettingsFromEnv, invalidateTelegramSettingsCache } from '../utils/telegram-settings.js'
+import { getProxySettings, invalidateProxySettingsCache } from '../utils/proxy-settings.js'
+import {
+  FRONTEND_ADMIN_AVATAR_KEYS,
+  FRONTEND_FONT_KEYS,
+  getFrontendUiSettings,
+  invalidateFrontendUiSettingsCache
+} from '../utils/frontend-ui-settings.js'
 import { getFeatureFlags, invalidateFeatureFlagsCache } from '../utils/feature-flags.js'
 import { CHANNEL_KEY_REGEX, getChannelByKey, getChannels, invalidateChannelsCache, normalizeChannelKey } from '../utils/channels.js'
+import { parseProxyConfig } from '../utils/proxy.js'
 import {
   PRODUCT_KEY_REGEX,
   getPurchaseProductByKey,
@@ -917,6 +925,106 @@ router.put('/telegram-settings', async (req, res) => {
     })
   } catch (error) {
     console.error('Update telegram-settings error:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+router.get('/proxy-settings', async (req, res) => {
+  try {
+    const db = await getDatabase()
+    const settings = await getProxySettings(db, { forceRefresh: true })
+
+    res.json({
+      proxy: {
+        chatgptProxyUrl: String(settings.chatgptProxyUrl || ''),
+        chatgptProxyUrlStored: Boolean(settings.stored?.chatgptProxyUrl)
+      }
+    })
+  } catch (error) {
+    console.error('Get proxy-settings error:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+router.put('/proxy-settings', async (req, res) => {
+  try {
+    const payload = req.body?.proxy && typeof req.body.proxy === 'object' ? req.body.proxy : (req.body || {})
+    const db = await getDatabase()
+    const current = await getProxySettings(db, { forceRefresh: true })
+
+    const nextProxyUrl = String(payload.chatgptProxyUrl ?? current.chatgptProxyUrl ?? '').trim()
+    if (nextProxyUrl && !parseProxyConfig(nextProxyUrl)) {
+      return res.status(400).json({ error: 'Invalid proxy url' })
+    }
+
+    upsertSystemConfigValue(db, 'chatgpt_proxy_url', nextProxyUrl)
+    saveDatabase()
+    invalidateProxySettingsCache()
+
+    const updated = await getProxySettings(db, { forceRefresh: true })
+
+    res.json({
+      proxy: {
+        chatgptProxyUrl: String(updated.chatgptProxyUrl || ''),
+        chatgptProxyUrlStored: Boolean(updated.stored?.chatgptProxyUrl)
+      }
+    })
+  } catch (error) {
+    console.error('Update proxy-settings error:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+router.get('/frontend-ui-settings', async (req, res) => {
+  try {
+    const db = await getDatabase()
+    const settings = await getFrontendUiSettings(db, { forceRefresh: true })
+    res.json({
+      ui: {
+        fontKey: settings.fontKey,
+        fontKeyStored: Boolean(settings.stored?.fontKey),
+        fontOptions: FRONTEND_FONT_KEYS,
+        adminAvatarKey: settings.adminAvatarKey,
+        adminAvatarKeyStored: Boolean(settings.stored?.adminAvatarKey),
+        adminAvatarOptions: FRONTEND_ADMIN_AVATAR_KEYS
+      }
+    })
+  } catch (error) {
+    console.error('Get frontend-ui-settings error:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+router.put('/frontend-ui-settings', async (req, res) => {
+  try {
+    const payload = req.body?.ui && typeof req.body.ui === 'object' ? req.body.ui : (req.body || {})
+    const db = await getDatabase()
+    const current = await getFrontendUiSettings(db, { forceRefresh: true })
+    const normalizedFont = String(payload.fontKey ?? current.fontKey).trim().toLowerCase()
+    const fontKey = FRONTEND_FONT_KEYS.includes(normalizedFont) ? normalizedFont : 'system'
+    const normalizedAvatar = String(payload.adminAvatarKey ?? current.adminAvatarKey).trim().toLowerCase()
+    const adminAvatarKey = (normalizedAvatar === 'default' || /^icon_\d+$/i.test(normalizedAvatar))
+      ? normalizedAvatar
+      : 'default'
+
+    upsertSystemConfigValue(db, 'frontend_font_key', fontKey)
+    upsertSystemConfigValue(db, 'frontend_admin_avatar_key', adminAvatarKey)
+    saveDatabase()
+    invalidateFrontendUiSettingsCache()
+
+    const updated = await getFrontendUiSettings(db, { forceRefresh: true })
+    res.json({
+      ui: {
+        fontKey: updated.fontKey,
+        fontKeyStored: Boolean(updated.stored?.fontKey),
+        fontOptions: FRONTEND_FONT_KEYS,
+        adminAvatarKey: updated.adminAvatarKey,
+        adminAvatarKeyStored: Boolean(updated.stored?.adminAvatarKey),
+        adminAvatarOptions: FRONTEND_ADMIN_AVATAR_KEYS
+      }
+    })
+  } catch (error) {
+    console.error('Update frontend-ui-settings error:', error)
     res.status(500).json({ error: 'Internal server error' })
   }
 })

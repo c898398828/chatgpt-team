@@ -30,6 +30,13 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import AnnouncementAdminPanel from '@/components/AnnouncementAdminPanel.vue'
 import { Eye, EyeOff, Sparkles, KeyRound, AlertCircle, CheckCircle2, RefreshCw } from 'lucide-vue-next'
+import { FRONTEND_FONT_OPTIONS, normalizeFrontendFontKey, resolveFrontendFontFamily, type FrontendFontKey } from '@/lib/frontendFonts'
+import {
+  FRONTEND_ADMIN_AVATAR_OPTIONS,
+  normalizeFrontendAdminAvatarKey,
+  resolveFrontendAdminAvatarUrl,
+  type FrontendAdminAvatarKey
+} from '@/lib/frontendAvatars'
 
 const teleportReady = ref(false)
 const activeTab = ref<'settings' | 'announcements'>('settings')
@@ -219,6 +226,18 @@ const telegramError = ref('')
 const telegramSuccess = ref('')
 const telegramLoading = ref(false)
 const showTelegramBotToken = ref(false)
+const chatgptProxyUrl = ref('')
+const chatgptProxyUrlStored = ref(false)
+const proxyError = ref('')
+const proxySuccess = ref('')
+const proxyLoading = ref(false)
+const frontendFontKey = ref<FrontendFontKey>('system')
+const frontendFontStored = ref(false)
+const frontendAdminAvatarKey = ref<FrontendAdminAvatarKey>('default')
+const frontendAdminAvatarStored = ref(false)
+const frontendFontError = ref('')
+const frontendFontSuccess = ref('')
+const frontendFontLoading = ref(false)
 
 onMounted(async () => {
   await nextTick()
@@ -239,6 +258,8 @@ onMounted(async () => {
     loadZpaySettings(),
     loadTurnstileSettings(),
     loadTelegramSettings(),
+    loadProxySettings(),
+    loadFrontendUiSettings(),
   ])
 })
 
@@ -924,6 +945,99 @@ const saveTelegramSettings = async () => {
     telegramError.value = err.response?.data?.error || '保存失败'
   } finally {
     telegramLoading.value = false
+  }
+}
+
+const loadProxySettings = async () => {
+  proxyError.value = ''
+  proxySuccess.value = ''
+  try {
+    const response = await adminService.getProxySettings()
+    chatgptProxyUrl.value = response.proxy?.chatgptProxyUrl || ''
+    chatgptProxyUrlStored.value = Boolean(response.proxy?.chatgptProxyUrlStored)
+  } catch (err: any) {
+    proxyError.value = err.response?.data?.error || '加载代理配置失败'
+  }
+}
+
+const saveProxySettings = async () => {
+  proxyError.value = ''
+  proxySuccess.value = ''
+
+  const value = chatgptProxyUrl.value.trim()
+  if (value) {
+    try {
+      const parsed = new URL(value)
+      const protocol = String(parsed.protocol || '').replace(':', '').toLowerCase()
+      const allowed = new Set(['http', 'https', 'socks', 'socks4', 'socks4a', 'socks5', 'socks5h'])
+      if (!allowed.has(protocol) || !parsed.hostname) {
+        proxyError.value = '代理地址格式不正确（支持 http/https/socks5h）'
+        return
+      }
+    } catch {
+      proxyError.value = '代理地址格式不正确（示例：socks5h://127.0.0.1:7890）'
+      return
+    }
+  }
+
+  proxyLoading.value = true
+  try {
+    const response = await adminService.updateProxySettings({
+      proxy: {
+        chatgptProxyUrl: value
+      }
+    })
+    chatgptProxyUrl.value = response.proxy?.chatgptProxyUrl || ''
+    chatgptProxyUrlStored.value = Boolean(response.proxy?.chatgptProxyUrlStored)
+    proxySuccess.value = '已保存（账号同步接口将立即使用新代理）'
+    setTimeout(() => (proxySuccess.value = ''), 3000)
+  } catch (err: any) {
+    proxyError.value = err.response?.data?.error || '保存失败'
+  } finally {
+    proxyLoading.value = false
+  }
+}
+
+const loadFrontendUiSettings = async () => {
+  frontendFontError.value = ''
+  frontendFontSuccess.value = ''
+  try {
+    const response = await adminService.getFrontendUiSettings()
+    frontendFontKey.value = normalizeFrontendFontKey(response.ui?.fontKey)
+    frontendFontStored.value = Boolean(response.ui?.fontKeyStored)
+    frontendAdminAvatarKey.value = normalizeFrontendAdminAvatarKey(response.ui?.adminAvatarKey)
+    frontendAdminAvatarStored.value = Boolean(response.ui?.adminAvatarKeyStored)
+  } catch (err: any) {
+    frontendFontError.value = err.response?.data?.error || '加载前端界面配置失败'
+  }
+}
+
+const saveFrontendUiSettings = async () => {
+  frontendFontError.value = ''
+  frontendFontSuccess.value = ''
+  frontendFontLoading.value = true
+  try {
+    const response = await adminService.updateFrontendUiSettings({
+      ui: {
+        fontKey: frontendFontKey.value,
+        adminAvatarKey: frontendAdminAvatarKey.value
+      }
+    })
+    frontendFontKey.value = normalizeFrontendFontKey(response.ui?.fontKey)
+    frontendFontStored.value = Boolean(response.ui?.fontKeyStored)
+    frontendAdminAvatarKey.value = normalizeFrontendAdminAvatarKey(response.ui?.adminAvatarKey)
+    frontendAdminAvatarStored.value = Boolean(response.ui?.adminAvatarKeyStored)
+    appConfigStore.frontendFontKey = frontendFontKey.value
+    appConfigStore.frontendAdminAvatarKey = frontendAdminAvatarKey.value
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.setProperty('--app-font-family', resolveFrontendFontFamily(frontendFontKey.value))
+    }
+    frontendFontSuccess.value = '已保存（字体已实时生效）'
+    setTimeout(() => (frontendFontSuccess.value = ''), 3000)
+  } catch (err: any) {
+    frontendFontError.value = err.response?.data?.error || '保存失败'
+  } finally {
+    frontendFontLoading.value = false
   }
 }
 
@@ -2215,6 +2329,152 @@ const savePointsWithdrawSettings = async () => {
               @click="saveTelegramSettings"
             >
               {{ telegramLoading ? '保存中...' : '保存 Telegram 配置' }}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card v-if="isSuperAdmin" class="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden flex flex-col lg:col-span-2">
+        <CardHeader class="border-b border-gray-50 bg-gray-50/30 px-6 py-5 sm:px-8 sm:py-6">
+          <CardTitle class="text-xl font-bold text-gray-900">前端字体配置</CardTitle>
+          <CardDescription class="text-gray-500">切换后台前端显示字体，保存后即时生效。</CardDescription>
+        </CardHeader>
+        <CardContent class="p-6 sm:p-8 space-y-6 flex-1">
+          <div class="grid gap-4 lg:grid-cols-2">
+            <div class="space-y-2">
+              <Label class="text-xs font-semibold text-gray-500 uppercase tracking-wider">系统字体</Label>
+              <Select v-model="frontendFontKey" :disabled="frontendFontLoading">
+                <SelectTrigger class="h-11 bg-gray-50 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all">
+                  <SelectValue placeholder="选择字体" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="option in FRONTEND_FONT_OPTIONS"
+                    :key="option.key"
+                    :value="option.key"
+                  >
+                    {{ option.label }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p class="text-xs text-gray-400">
+                <template v-if="frontendFontStored">已入库；当前配置优先于环境变量。</template>
+                <template v-else>未入库；将使用默认系统字体或运行时配置。</template>
+              </p>
+            </div>
+
+            <div class="space-y-2">
+              <Label class="text-xs font-semibold text-gray-500 uppercase tracking-wider">管理员头像</Label>
+              <Select v-model="frontendAdminAvatarKey" :disabled="frontendFontLoading">
+                <SelectTrigger class="h-11 bg-gray-50 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all">
+                  <SelectValue placeholder="选择头像" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="option in FRONTEND_ADMIN_AVATAR_OPTIONS"
+                    :key="option.key"
+                    :value="option.key"
+                  >
+                    {{ option.label }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p class="text-xs text-gray-400">
+                <template v-if="frontendAdminAvatarStored">已入库；当前配置优先于环境变量。</template>
+                <template v-else>未入库；默认使用字母头像。</template>
+              </p>
+            </div>
+          </div>
+
+          <div class="rounded-2xl border border-gray-100 bg-gray-50/60 p-4">
+            <p class="text-xs text-gray-500 mb-3">头像预览</p>
+            <div class="w-14 h-14 rounded-full overflow-hidden border border-sky-200 bg-gradient-to-br from-sky-100 to-cyan-100 flex items-center justify-center text-sky-700 font-semibold text-xl">
+              <img
+                v-if="resolveFrontendAdminAvatarUrl(frontendAdminAvatarKey)"
+                :src="resolveFrontendAdminAvatarUrl(frontendAdminAvatarKey)"
+                alt="管理员头像预览"
+                class="h-full w-full object-cover"
+              />
+              <template v-else>A</template>
+            </div>
+          </div>
+
+          <div v-if="frontendFontError" class="rounded-xl bg-red-50 p-4 text-red-600 border border-red-100 text-sm font-medium">
+            {{ frontendFontError }}
+          </div>
+
+          <div v-if="frontendFontSuccess" class="rounded-xl bg-green-50 p-4 text-green-600 border border-green-100 text-sm font-medium">
+            {{ frontendFontSuccess }}
+          </div>
+
+          <div class="flex flex-col sm:flex-row gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              class="w-full sm:w-auto h-11 rounded-xl"
+              :disabled="frontendFontLoading"
+              @click="loadFrontendUiSettings"
+            >
+              刷新
+            </Button>
+            <Button
+              type="button"
+              class="w-full sm:flex-1 h-11 rounded-xl bg-black hover:bg-gray-800 text-white shadow-lg shadow-black/5"
+              :disabled="frontendFontLoading"
+              @click="saveFrontendUiSettings"
+            >
+              {{ frontendFontLoading ? '保存中...' : '保存字体配置' }}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card v-if="isSuperAdmin" class="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden flex flex-col lg:col-span-2">
+        <CardHeader class="border-b border-gray-50 bg-gray-50/30 px-6 py-5 sm:px-8 sm:py-6">
+          <CardTitle class="text-xl font-bold text-gray-900">ChatGPT 出站代理配置</CardTitle>
+          <CardDescription class="text-gray-500">用于账号同步/邀请等后端请求 ChatGPT 的网络代理。</CardDescription>
+        </CardHeader>
+        <CardContent class="p-6 sm:p-8 space-y-6 flex-1">
+          <div class="space-y-2">
+            <Label class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Proxy URL</Label>
+            <Input
+              v-model="chatgptProxyUrl"
+              type="text"
+              placeholder="socks5h://127.0.0.1:7890"
+              class="h-11 bg-gray-50 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all font-mono text-sm"
+              :disabled="proxyLoading"
+            />
+            <p class="text-xs text-gray-400">
+              <template v-if="chatgptProxyUrlStored">已入库；留空保存可显式禁用代理（覆盖 .env）。</template>
+              <template v-else>未入库；默认读取 .env 中 CHATGPT_PROXY_URL / ALL_PROXY 等。</template>
+            </p>
+          </div>
+
+          <div v-if="proxyError" class="rounded-xl bg-red-50 p-4 text-red-600 border border-red-100 text-sm font-medium">
+            {{ proxyError }}
+          </div>
+
+          <div v-if="proxySuccess" class="rounded-xl bg-green-50 p-4 text-green-600 border border-green-100 text-sm font-medium">
+            {{ proxySuccess }}
+          </div>
+
+          <div class="flex flex-col sm:flex-row gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              class="w-full sm:w-auto h-11 rounded-xl"
+              :disabled="proxyLoading"
+              @click="loadProxySettings"
+            >
+              刷新
+            </Button>
+            <Button
+              type="button"
+              class="w-full sm:flex-1 h-11 rounded-xl bg-black hover:bg-gray-800 text-white shadow-lg shadow-black/5"
+              :disabled="proxyLoading"
+              @click="saveProxySettings"
+            >
+              {{ proxyLoading ? '保存中...' : '保存代理配置' }}
             </Button>
           </div>
         </CardContent>
