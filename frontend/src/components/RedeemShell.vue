@@ -75,7 +75,7 @@ watch(isAuthenticated, (value) => {
 </script>
 
 <template>
-  <div class="min-h-screen w-full overflow-hidden relative flex items-start justify-center pt-12 sm:pt-24 pb-12 px-4 sm:px-6 lg:px-8">
+  <div class="min-h-screen w-full overflow-hidden relative flex items-start justify-center pt-10 sm:pt-20 pb-12 px-4 sm:px-6 lg:px-8">
     <div
       v-if="props.showUserStatusBar"
       class="fixed top-4 right-4 sm:top-8 sm:right-12 z-30 flex items-start justify-end gap-3"
@@ -154,11 +154,11 @@ watch(isAuthenticated, (value) => {
       </template>
     </div>
 
-    <div class="absolute inset-0 z-0 overflow-hidden bg-[#fbfbfd] dark:bg-[#000000]">
+    <div class="absolute inset-0 z-0 overflow-hidden bg-[#f6f8fc] dark:bg-[#02050a]">
       <div class="aurora-blob blob-1"></div>
       <div class="aurora-blob blob-2"></div>
       <div class="aurora-blob blob-3"></div>
-      <div class="absolute inset-0 bg-white/40 dark:bg-black/20 backdrop-blur-3xl"></div>
+      <div class="absolute inset-0 bg-gradient-to-b from-white/55 via-white/35 to-white/60 dark:from-slate-950/35 dark:via-slate-950/25 dark:to-slate-950/45 backdrop-blur-3xl"></div>
       <div class="absolute inset-0 opacity-[0.015] dark:opacity-[0.03] bg-[url('https://grainy-gradients.vercel.app/noise.svg')]"></div>
     </div>
     <div :class="['w-full relative z-10 space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-1000 ease-out-expo', maxWidth]">
@@ -181,9 +181,9 @@ watch(isAuthenticated, (value) => {
   left: -20%;
   width: 700px;
   height: 700px;
-  background: radial-gradient(circle, #60a5fa, #3b82f6);
+  background: radial-gradient(circle, #38bdf8, #0ea5e9);
   animation-delay: 0s;
-  opacity: 0.7;
+  opacity: 0.58;
 }
 
 .blob-2 {
@@ -191,9 +191,9 @@ watch(isAuthenticated, (value) => {
   right: -20%;
   width: 800px;
   height: 800px;
-  background: radial-gradient(circle, #c084fc, #a855f7);
+  background: radial-gradient(circle, #34d399, #10b981);
   animation-delay: -6s;
-  opacity: 0.6;
+  opacity: 0.48;
 }
 
 .blob-3 {
@@ -201,9 +201,9 @@ watch(isAuthenticated, (value) => {
   left: 10%;
   width: 900px;
   height: 900px;
-  background: radial-gradient(circle, #f472b6, #ec4899);
+  background: radial-gradient(circle, #f59e0b, #f97316);
   animation-delay: -12s;
-  opacity: 0.6;
+  opacity: 0.42;
 }
 
 @keyframes float {
@@ -230,14 +230,14 @@ watch(isAuthenticated, (value) => {
 }
 
 :global(.dark) .blob-1 {
-  background: radial-gradient(circle, #0284c7, #0369a1);
+  background: radial-gradient(circle, #0369a1, #075985);
 }
 
 :global(.dark) .blob-2 {
-  background: radial-gradient(circle, #7c3aed, #6d28d9);
+  background: radial-gradient(circle, #047857, #065f46);
 }
 
 :global(.dark) .blob-3 {
-  background: radial-gradient(circle, #db2777, #be185d);
+  background: radial-gradient(circle, #b45309, #9a3412);
 }
 </style>

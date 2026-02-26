@@ -4,20 +4,20 @@
       <div class="inline-flex items-center gap-2.5 rounded-full bg-white/60 dark:bg-white/10 backdrop-blur-xl border border-white/40 dark:border-white/10 px-4 py-1.5 shadow-sm transition-transform hover:scale-105 duration-300 cursor-default">
         <span class="relative flex h-2.5 w-2.5">
           <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-          <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#007AFF]"></span>
+          <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#0EA5E9]"></span>
         </span>
         <span class="text-[13px] font-medium text-gray-600 dark:text-gray-300 tracking-wide">自动发邀请 · 验证码一次性</span>
       </div>
 
       <div class="space-y-3">
-        <h1 class="text-[40px] leading-tight font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 dark:from-blue-400 dark:via-purple-400 dark:to-pink-400 drop-shadow-sm animate-gradient-x">
+        <h1 class="text-[40px] leading-tight font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-sky-600 via-cyan-500 to-emerald-500 dark:from-sky-400 dark:via-cyan-400 dark:to-emerald-400 drop-shadow-sm animate-gradient-x">
           ChatGPT 账号兑换
         </h1>
       </div>
     </div>
 
     <div class="relative group perspective-1000">
-      <div class="absolute -inset-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-[2rem] blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 animate-tilt"></div>
+      <div class="absolute -inset-1 bg-gradient-to-r from-sky-600 via-cyan-500 to-emerald-500 rounded-[2rem] blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 animate-tilt"></div>
       <AppleCard
         variant="glass"
         class="relative overflow-hidden shadow-2xl shadow-black/10 border border-white/40 dark:border-white/10 ring-1 ring-black/5 backdrop-blur-3xl transition-all duration-500 hover:shadow-3xl hover:scale-[1.01] animate-float"
@@ -64,7 +64,7 @@
                 type="submit"
                 variant="primary"
                 size="lg"
-                class="w-full h-[50px] text-[17px] font-medium shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+                class="w-full h-[50px] text-[17px] font-medium shadow-lg shadow-sky-500/20 hover:shadow-emerald-500/25 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
                 :loading="isLoading"
                 :disabled="isLoading"
               >
@@ -138,15 +138,15 @@
             </div>
           </div>
 
-          <div class="pt-6 border-t border-gray-200/60 dark:border-white/10">
+          <div class="pt-6 border-t border-slate-200/70 dark:border-slate-700/50">
             <h4 class="text-[13px] font-semibold text-[#86868b] uppercase tracking-wider mb-4">使用提示</h4>
             <ul class="space-y-3 text-[14px] text-[#1d1d1f]/70 dark:text-white/70">
               <li class="flex items-start gap-3">
-                <span class="h-1.5 w-1.5 rounded-full bg-[#007AFF] mt-2 flex-shrink-0"></span>
+                <span class="h-1.5 w-1.5 rounded-full bg-[#0EA5E9] mt-2 flex-shrink-0"></span>
                 <span>每个兑换码只能使用一次。</span>
               </li>
               <li class="flex items-start gap-3">
-                <span class="h-1.5 w-1.5 rounded-full bg-[#007AFF] mt-2 flex-shrink-0"></span>
+                <span class="h-1.5 w-1.5 rounded-full bg-[#0EA5E9] mt-2 flex-shrink-0"></span>
                 <span>未收到邮件请检查垃圾箱/联系管理员。</span>
               </li>
             </ul>

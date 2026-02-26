@@ -4,20 +4,20 @@
       <div class="inline-flex items-center gap-2.5 rounded-full bg-white/60 dark:bg-white/10 backdrop-blur-xl border border-white/40 dark:border-white/10 px-4 py-1.5 shadow-sm transition-transform hover:scale-105 duration-300 cursor-default">
         <span class="relative flex h-2.5 w-2.5">
           <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-          <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#0A84FF]"></span>
+          <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#06b6d4]"></span>
         </span>
         <span class="text-[13px] font-medium text-gray-600 dark:text-gray-300 tracking-wide">闲鱼订单专用 · 自动匹配兑换码</span>
       </div>
 
       <div class="space-y-3">
-        <h1 class="text-[40px] leading-tight font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-blue-500 via-cyan-500 to-teal-400 dark:from-blue-400 dark:via-cyan-400 dark:to-teal-300 drop-shadow-sm animate-gradient-x">
+        <h1 class="text-[40px] leading-tight font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-cyan-500 via-sky-500 to-blue-500 dark:from-cyan-400 dark:via-sky-400 dark:to-blue-400 drop-shadow-sm animate-gradient-x">
           闲鱼订单兑换
         </h1>
       </div>
     </div>
 
     <div class="relative group perspective-1000">
-      <div class="absolute -inset-1 bg-gradient-to-r from-blue-500 via-cyan-500 to-teal-400 rounded-[2rem] blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 animate-tilt"></div>
+      <div class="absolute -inset-1 bg-gradient-to-r from-cyan-500 via-sky-500 to-blue-500 rounded-[2rem] blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 animate-tilt"></div>
       <AppleCard
         variant="glass"
         class="relative overflow-hidden shadow-2xl shadow-black/10 border border-white/40 dark:border-white/10 ring-1 ring-black/5 backdrop-blur-3xl transition-all duration-500 hover:shadow-3xl hover:scale-[1.01] animate-float"
@@ -142,11 +142,11 @@
             </div>
           </div>
 
-          <div class="pt-6 border-t border-gray-200/60 dark:border-white/10 space-y-3">
+          <div class="pt-6 border-t border-slate-200/70 dark:border-slate-700/50 space-y-3">
             <h4 class="text-[13px] font-semibold text-[#86868b] uppercase tracking-wider">使用说明</h4>
             <ul class="space-y-3 text-[14px] text-[#1d1d1f]/70 dark:text-white/70">
               <li class="flex items-start gap-3">
-                <span class="h-1.5 w-1.5 rounded-full bg-[#0A84FF] mt-2 flex-shrink-0"></span>
+                <span class="h-1.5 w-1.5 rounded-full bg-[#06b6d4] mt-2 flex-shrink-0"></span>
                 <RouterLink
                   to="/redeem/account-recovery"
                   class="text-[#0A84FF] hover:text-[#0066cc] font-medium transition"
@@ -155,11 +155,11 @@
                 </RouterLink>
               </li>
               <li class="flex items-start gap-3">
-                <span class="h-1.5 w-1.5 rounded-full bg-[#0A84FF] mt-2 flex-shrink-0"></span>
+                <span class="h-1.5 w-1.5 rounded-full bg-[#06b6d4] mt-2 flex-shrink-0"></span>
                 <span>兑换失败/未收到邀请邮件，请直接发送邮箱给客服处理（请不要发截图哦～）</span>
               </li>
               <li class="flex items-start gap-3">
-                <span class="h-1.5 w-1.5 rounded-full bg-[#0A84FF] mt-2 flex-shrink-0"></span>
+                <span class="h-1.5 w-1.5 rounded-full bg-[#06b6d4] mt-2 flex-shrink-0"></span>
                 <span>兑换通常需要 30-60 秒，请耐心等待并保持页面打开，系统完成后会自动提示</span>
               </li>
             </ul>

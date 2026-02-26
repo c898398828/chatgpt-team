@@ -9,7 +9,7 @@
         v-if="isRedirecting || isFetchingUser"
         class="w-full rounded-3xl bg-white/70 dark:bg-black/30 border border-white/40 dark:border-white/10 backdrop-blur-2xl p-6 flex flex-col items-center text-center gap-3 shadow-xl"
       >
-        <div class="h-10 w-10 rounded-full bg-[#007AFF]/10 flex items-center justify-center">
+        <div class="h-10 w-10 rounded-full bg-[#0EA5E9]/10 flex items-center justify-center">
           <span class="h-5 w-5 rounded-full border-2 border-[#007AFF] border-dashed animate-spin"></span>
         </div>
         <div class="space-y-1">
@@ -60,14 +60,14 @@
             </button>
           </div>
           <div class="space-y-2">
-            <h1 class="text-[32px] sm:text-[40px] leading-tight font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 dark:from-blue-400 dark:via-purple-400 dark:to-pink-400 drop-shadow-sm animate-gradient-x">
+            <h1 class="text-[32px] sm:text-[40px] leading-tight font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-sky-600 via-cyan-500 to-emerald-500 dark:from-sky-400 dark:via-cyan-400 dark:to-emerald-400 drop-shadow-sm animate-gradient-x">
               Linux DO 专属兑换
             </h1>
           </div>
         </div>
 
         <div class="relative group perspective-1000">
-          <div class="absolute -inset-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-[2rem] blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 animate-tilt"></div>
+          <div class="absolute -inset-1 bg-gradient-to-r from-sky-600 via-cyan-500 to-emerald-500 rounded-[2rem] blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 animate-tilt"></div>
           <AppleCard
             variant="glass"
             class="relative mt-6 overflow-hidden shadow-2xl shadow-black/10 border border-white/40 dark:border-white/10 ring-1 ring-black/5 backdrop-blur-3xl transition-all duration-500 hover:shadow-3xl hover:scale-[1.01] animate-float"
@@ -114,7 +114,7 @@
                   type="submit"
                   variant="primary"
                   size="lg"
-                  class="w-full h-[50px] text-[17px] font-medium shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+                  class="w-full h-[50px] text-[17px] font-medium shadow-lg shadow-sky-500/20 hover:shadow-emerald-500/25 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
                   :loading="isLoading"
                   :disabled="isLoading"
                 >
