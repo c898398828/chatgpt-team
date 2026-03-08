@@ -1,12 +1,14 @@
 # ChatGPT Team Helper
 [![Telegram 交流群](https://img.shields.io/badge/Telegram-交流群-blue?logo=telegram)](https://t.me/+W7iplSdBGXhlMDc1)
 [![Linux DO](https://img.shields.io/badge/Linux%20DO-Yelo-green?logo=discourse)](https://linux.do/u/yelo/summary)
+<img width="1920" height="928" alt="Snipaste_2026-03-07_23-38-20" src="https://github.com/user-attachments/assets/029498bf-391c-44b5-9167-cfda54420b68" />
 
 一个多渠道 Team 账号管理与兑换平台，支持多种订单渠道接入、自动发货、积分体系和权限管理。使用 Vue 3、Node.js、shadcn-vue 和 SQLite 构建。
-
-<img width="3840" height="1920" alt="image" src="https://github.com/user-attachments/assets/e5fcd950-7844-4ff7-be00-28246024a847" />
-
-<img width="3840" height="1926" alt="image" src="https://github.com/user-attachments/assets/5d8f4107-71ed-46c7-86c5-46cb02dfacbc" />
+<img width="1649" height="876" alt="image" src="https://github.com/user-attachments/assets/f5a6c40f-94a5-48b8-8c29-c8c44c05124e" />
+<img width="1649" height="876" alt="image" src="https://github.com/user-attachments/assets/ed35210e-c9c3-40d9-bafd-0e51b0bbcdb0" />
+<img width="1920" height="928" alt="Snipaste_2026-03-07_23-37-51" src="https://github.com/user-attachments/assets/fa54cff2-b352-414c-9dfa-55e1a5f35cd0" />
+<img width="1920" height="928" alt="Snipaste_2026-03-07_23-39-20" src="https://github.com/user-attachments/assets/f6242a08-84cb-4701-ac5f-b54a7d20f7b3" />
+<img width="1920" height="928" alt="Snipaste_2026-03-07_23-38-20" src="https://github.com/user-attachments/assets/b29d2805-4c68-4d5e-86fb-bf66c1d0f193" />
 
 ![Uploading image.png…]()
 
