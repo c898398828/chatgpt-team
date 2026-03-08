@@ -10,14 +10,6 @@
 <img width="1920" height="928" alt="Snipaste_2026-03-07_23-39-20" src="https://github.com/user-attachments/assets/f6242a08-84cb-4701-ac5f-b54a7d20f7b3" />
 <img width="1920" height="928" alt="Snipaste_2026-03-07_23-38-20" src="https://github.com/user-attachments/assets/b29d2805-4c68-4d5e-86fb-bf66c1d0f193" />
 
-![Uploading image.png…]()
-
-
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Kylsky/chatgpt-team-helper&type=Date)](https://star-history.com/#Kylsky/chatgpt-team-helper&Date)
-
 ## 功能特性
 
 ### 账号管理
