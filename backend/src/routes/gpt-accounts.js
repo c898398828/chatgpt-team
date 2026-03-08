@@ -27,6 +27,105 @@ const normalizeBoolean = (value) => {
 
 const EXPIRE_AT_REGEX = /^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/
 
+// ─── Codex 配额工具函数 ───────────────────────────────────────────────────────
+
+/** 从 axios 响应头解析 Codex 配额信息（逻辑同 augment-token-mng-main 的 Rust 实现） */
+const parseCodexQuotaFromHeaders = (headers) => {
+  const getNum = (key) => {
+    const val = headers[key]
+    if (!val) return undefined
+    const n = parseFloat(String(val))
+    return isNaN(n) ? undefined : n
+  }
+
+  const primaryUsed    = getNum('x-codex-primary-used-percent')
+  const primaryReset   = getNum('x-codex-primary-reset-after-seconds')
+  const primaryWindow  = getNum('x-codex-primary-window-minutes')
+  const secondaryUsed  = getNum('x-codex-secondary-used-percent')
+  const secondaryReset = getNum('x-codex-secondary-reset-after-seconds')
+  const secondaryWindow = getNum('x-codex-secondary-window-minutes')
+
+  if (primaryUsed == null && secondaryUsed == null) return null
+
+  // 根据窗口时长判断哪个是 5h，哪个是 7d
+  let h5Used, h5Reset, h5Window, d7Used, d7Reset, d7Window
+
+  if (primaryWindow != null && secondaryWindow != null) {
+    if (primaryWindow <= secondaryWindow) {
+      h5Used = primaryUsed;  h5Reset = primaryReset;  h5Window = primaryWindow
+      d7Used = secondaryUsed; d7Reset = secondaryReset; d7Window = secondaryWindow
+    } else {
+      h5Used = secondaryUsed; h5Reset = secondaryReset; h5Window = secondaryWindow
+      d7Used = primaryUsed;  d7Reset = primaryReset;  d7Window = primaryWindow
+    }
+  } else if (primaryWindow != null) {
+    if (primaryWindow <= 360) {
+      h5Used = primaryUsed; h5Reset = primaryReset; h5Window = primaryWindow
+    } else {
+      d7Used = primaryUsed; d7Reset = primaryReset; d7Window = primaryWindow
+    }
+  } else if (secondaryWindow != null) {
+    if (secondaryWindow <= 360) {
+      h5Used = secondaryUsed; h5Reset = secondaryReset; h5Window = secondaryWindow
+    } else {
+      d7Used = secondaryUsed; d7Reset = secondaryReset; d7Window = secondaryWindow
+    }
+  } else {
+    // 无窗口信息时：primary → 7d，secondary → 5h（同 Rust 逻辑）
+    d7Used = primaryUsed; d7Reset = primaryReset
+    h5Used = secondaryUsed; h5Reset = secondaryReset
+  }
+
+  return {
+    codex_5h_used_percent: h5Used,
+    codex_5h_reset_after_seconds: h5Reset,
+    codex_5h_window_minutes: h5Window,
+    codex_7d_used_percent: d7Used,
+    codex_7d_reset_after_seconds: d7Reset,
+    codex_7d_window_minutes: d7Window,
+    is_forbidden: false,
+    quota_fetched_at: Math.floor(Date.now() / 1000)
+  }
+}
+
+/** 调用 ChatGPT Codex API 获取账号配额（从响应头提取） */
+const fetchCodexQuota = async (accessToken, chatgptAccountId) => {
+  const CODEX_API_URL = 'https://chatgpt.com/backend-api/codex/responses'
+  const requestBody = {
+    model: 'gpt-5.1-codex',
+    input: [{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
+    instructions: 'You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user\'s computer.',
+    store: false,
+    stream: true
+  }
+  const reqHeaders = {
+    Authorization: `Bearer ${accessToken}`,
+    'Content-Type': 'application/json',
+    Accept: 'text/event-stream',
+    Host: 'chatgpt.com'
+  }
+  if (chatgptAccountId) reqHeaders['chatgpt-account-id'] = chatgptAccountId
+
+  const response = await axios.post(CODEX_API_URL, requestBody, {
+    headers: reqHeaders,
+    responseType: 'stream',
+    validateStatus: () => true,  // 不让 axios 对非 2xx 抛错
+    timeout: 30000
+  })
+
+  // 立即销毁响应流，我们只需要响应头
+  try { response.data.destroy() } catch { /* ignore */ }
+
+  const status = response.status
+  if (status === 401) throw new Error('HTTP 401: Token expired or invalid')
+  if (status === 402 || status === 403) return { is_forbidden: true, quota_fetched_at: Math.floor(Date.now() / 1000) }
+  if (status >= 200 && status < 300) {
+    const quota = parseCodexQuotaFromHeaders(response.headers)
+    return quota || { is_forbidden: false, quota_fetched_at: Math.floor(Date.now() / 1000) }
+  }
+  throw new Error(`HTTP ${status}`)
+}
+
 const formatExpireAt = (date) => {
   const pad = (value) => String(value).padStart(2, '0')
   try {
@@ -236,7 +335,8 @@ const loadAccountsForStatusCheck = async (db, { threshold }) => {
              is_open,
              COALESCE(is_banned, 0) AS is_banned,
              created_at,
-             updated_at
+             updated_at,
+             plan_type
       FROM gpt_accounts
       WHERE created_at >= DATETIME('now', 'localtime', ?)
         AND COALESCE(is_banned, 0) = 0
@@ -261,7 +361,8 @@ const loadAccountsForStatusCheck = async (db, { threshold }) => {
     isDemoted: false,
     isBanned: Boolean(row[10]),
     createdAt: row[11],
-    updatedAt: row[12]
+    updatedAt: row[12],
+    planType: row[13] || null
   }))
 
   const truncated = totalEligible > accounts.length
@@ -275,12 +376,39 @@ const loadAccountsForStatusCheck = async (db, { threshold }) => {
   }
 }
 
+// 通过 check/v4 API 验证 token 并识别账号类型
+const verifyAndDetectPlanType = async (token) => {
+  const allAccounts = await fetchOpenAiAccountInfo(token)
+  if (allAccounts.length === 0) return null
+
+  // 优先返回 team 类型账号，其次 plus，最后 free
+  const sorted = [...allAccounts].sort((a, b) => {
+    const priority = { team: 0, plus: 1, free: 2 }
+    return (priority[a.planType] ?? 3) - (priority[b.planType] ?? 3)
+  })
+  return sorted
+}
+
+// 同步检查结果到数据库：plan_type、chatgpt_account_id
+const persistCheckResult = (db, accountId, info) => {
+  if (!info) return
+  const updates = ['plan_type = ?', 'updated_at = DATETIME(\'now\', \'localtime\')']
+  const params = [info.planType || null]
+  if (info.accountId) {
+    updates.push('chatgpt_account_id = ?')
+    params.push(info.accountId)
+  }
+  params.push(accountId)
+  db.run(`UPDATE gpt_accounts SET ${updates.join(', ')} WHERE id = ?`, params)
+}
+
 const checkSingleAccountStatus = async (db, account, nowMs) => {
   const base = {
     id: account.id,
     email: account.email,
     createdAt: account.createdAt,
     expireAt: account.expireAt || null,
+    planType: account.planType || null,
     refreshed: false
   }
 
@@ -293,11 +421,49 @@ const checkSingleAccountStatus = async (db, account, nowMs) => {
     return { ...base, status: 'expired', reason: 'expireAt 已过期' }
   }
 
+  // 统一验证流程：check/v4 检测 token 有效性 + 识别账号类型
+  const verifyAccount = async (acct) => {
+    const accountInfoList = await verifyAndDetectPlanType(acct.token)
+    if (!accountInfoList || accountInfoList.length === 0) {
+      throw new Error('未找到关联的 ChatGPT 账号')
+    }
+
+    // 匹配当前账号的 chatgptAccountId（如果有）
+    const currentChatgptId = String(acct.chatgptAccountId || '').trim()
+    let matched = currentChatgptId
+      ? accountInfoList.find(a => a.accountId === currentChatgptId)
+      : null
+
+    // 没匹配到，取优先级最高的
+    if (!matched) matched = accountInfoList[0]
+
+    // 保存到数据库
+    persistCheckResult(db, acct.id, matched)
+    base.planType = matched.planType
+
+    // Team 账号额外验证用户列表是否可访问
+    if (matched.planType === 'team' && matched.accountId) {
+      const verifyAcct = { ...acct, chatgptAccountId: matched.accountId }
+      try {
+        await fetchAccountUsersList(acct.id, {
+          accountRecord: verifyAcct,
+          userListParams: { offset: 0, limit: 1, query: '' }
+        })
+      } catch (teamErr) {
+        // Team 用户列表访问失败不影响整体判断，仅记录原因
+        const msg = teamErr?.message || ''
+        if (msg.includes('account_deactivated') || msg.includes('已自动标记为封号')) {
+          throw teamErr
+        }
+        // 其他 team 错误（如权限不足）仅作为提示，不改变状态
+      }
+    }
+
+    return matched
+  }
+
   try {
-    await fetchAccountUsersList(account.id, {
-      accountRecord: account,
-      userListParams: { offset: 0, limit: 1, query: '' }
-    })
+    await verifyAccount(account)
     return { ...base, status: 'normal', reason: null }
   } catch (error) {
     const message = error?.message ? String(error.message) : String(error || '')
@@ -310,13 +476,10 @@ const checkSingleAccountStatus = async (db, account, nowMs) => {
     if (status === 401) {
       const storedRefreshToken = String(account.refreshToken || '').trim()
       if (!storedRefreshToken) {
-        const reason = message
-          ? `${message}`
-          : 'Token 已过期或无效（未配置 refresh token）'
-        return { ...base, status: 'expired', reason }
+        return { ...base, status: 'expired', reason: message || 'Token 已过期或无效（未配置 refresh token）' }
       }
 
-      // Best-effort: try to refresh and re-check once.
+      // 尝试刷新 token 后重新检查
       try {
         const refreshedTokens = await refreshAccessTokenWithRefreshToken(storedRefreshToken)
         const persisted = await persistAccountTokens(db, account.id, refreshedTokens)
@@ -328,11 +491,8 @@ const checkSingleAccountStatus = async (db, account, nowMs) => {
         }
 
         try {
-          await fetchAccountUsersList(account.id, {
-            accountRecord: nextAccount,
-            userListParams: { offset: 0, limit: 1, query: '' }
-          })
-          return { ...base, status: 'normal', refreshed: true, reason: 'Token 已过期，已使用 refresh token 自动刷新' }
+          await verifyAccount(nextAccount)
+          return { ...base, status: 'normal', refreshed: true, reason: 'Token 已自动刷新' }
         } catch (recheckError) {
           const reMsg = recheckError?.message ? String(recheckError.message) : String(recheckError || '')
           const reStatus = Number(recheckError?.status || 0)
@@ -341,16 +501,13 @@ const checkSingleAccountStatus = async (db, account, nowMs) => {
             return { ...base, status: 'banned', refreshed: true, reason: reMsg || null }
           }
           if (reStatus === 401) {
-            return { ...base, status: 'expired', refreshed: true, reason: reMsg || 'Token 已过期，已尝试刷新但仍无效' }
+            return { ...base, status: 'expired', refreshed: true, reason: '刷新后仍无效' }
           }
-          return { ...base, status: 'failed', refreshed: true, reason: reMsg || 'Token 已过期，已刷新但校验失败' }
+          return { ...base, status: 'failed', refreshed: true, reason: reMsg || '刷新后校验失败' }
         }
       } catch (refreshError) {
         const refreshMsg = refreshError?.message ? String(refreshError.message) : String(refreshError || '')
-        const reason = refreshMsg
-          ? `Token 已过期，refresh token 刷新失败：${refreshMsg}`
-          : 'Token 已过期，refresh token 刷新失败'
-        return { ...base, status: 'expired', reason }
+        return { ...base, status: 'expired', reason: `refresh token 刷新失败：${refreshMsg}` }
       }
     }
 
@@ -439,6 +596,110 @@ router.post('/check-token', async (req, res) => {
       return res.status(error.status || 500).json({ error: error.message })
     }
 
+    return res.status(500).json({ error: '内部服务器错误' })
+  }
+})
+
+// 通过 Refresh Token 快速添加账号（自动获取 email 和 plan type）
+router.post('/login-by-refresh-token', async (req, res) => {
+  try {
+    const { refreshToken } = req.body || {}
+    const normalized = String(refreshToken || '').trim()
+    if (!normalized) {
+      return res.status(400).json({ error: 'refreshToken is required' })
+    }
+
+    // 1. 换取 access token + id_token
+    const tokens = await refreshAccessTokenWithRefreshToken(normalized)
+    const { accessToken, refreshToken: newRefreshToken, idToken } = tokens
+
+    // 2. 从 id_token (JWT) 的 payload 中解析 email
+    let email = null
+    if (idToken) {
+      try {
+        const parts = idToken.split('.')
+        if (parts.length >= 2) {
+          const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf-8'))
+          email = payload.email || null
+        }
+      } catch {
+        // 忽略解码错误
+      }
+    }
+
+    if (!email) {
+      return res.status(400).json({ error: '无法从 token 中提取邮箱，请使用手动添加模式填写账号信息' })
+    }
+    const normalizedEmail = normalizeEmail(email)
+
+    // 3. 通过 check/v4 API 获取 plan type 和 chatgptAccountId
+    let planType = null
+    let chatgptAccountId = null
+    try {
+      const accountInfoList = await verifyAndDetectPlanType(accessToken)
+      if (accountInfoList && accountInfoList.length > 0) {
+        planType = accountInfoList[0].planType || null
+        chatgptAccountId = accountInfoList[0].accountId || null
+      }
+    } catch {
+      // 获取 plan type 失败不影响账号创建
+    }
+
+    const db = await getDatabase()
+    const SELECT_FIELDS = `id, email, token, refresh_token, user_count, invite_count, chatgpt_account_id, oai_device_id, expire_at, is_open,
+           COALESCE(is_banned, 0) AS is_banned, created_at, updated_at, plan_type`
+
+    const mapRow = (row) => ({
+      id: row[0],
+      email: row[1],
+      token: row[2],
+      refreshToken: row[3],
+      userCount: row[4],
+      inviteCount: row[5],
+      chatgptAccountId: row[6],
+      oaiDeviceId: row[7],
+      expireAt: row[8] || null,
+      isOpen: Boolean(row[9]),
+      isDemoted: false,
+      isBanned: Boolean(row[10]),
+      createdAt: row[11],
+      updatedAt: row[12],
+      planType: row[13] || null
+    })
+
+    // 4. 检查账号是否已存在（按邮箱查重）
+    const existing = db.exec(`SELECT id FROM gpt_accounts WHERE LOWER(email) = ?`, [normalizedEmail])
+    const existingId = existing[0]?.values?.[0]?.[0]
+
+    if (existingId) {
+      // 更新已有账号的 token 信息
+      db.run(
+        `UPDATE gpt_accounts
+         SET token = ?, refresh_token = ?, plan_type = ?,
+             chatgpt_account_id = COALESCE(NULLIF(?, ''), chatgpt_account_id),
+             updated_at = DATETIME('now', 'localtime')
+         WHERE id = ?`,
+        [accessToken, newRefreshToken || null, planType, chatgptAccountId || '', existingId]
+      )
+      await saveDatabase()
+      const r = db.exec(`SELECT ${SELECT_FIELDS} FROM gpt_accounts WHERE id = ?`, [existingId])
+      return res.json({ account: mapRow(r[0].values[0]), updated: true, message: '账号 token 已更新' })
+    } else {
+      // 创建新账号
+      db.run(
+        `INSERT INTO gpt_accounts (email, token, refresh_token, user_count, plan_type, chatgpt_account_id, created_at, updated_at)
+         VALUES (?, ?, ?, 1, ?, ?, DATETIME('now', 'localtime'), DATETIME('now', 'localtime'))`,
+        [normalizedEmail, accessToken, newRefreshToken || null, planType, chatgptAccountId || null]
+      )
+      await saveDatabase()
+      const r = db.exec(`SELECT ${SELECT_FIELDS} FROM gpt_accounts WHERE id = last_insert_rowid()`)
+      return res.json({ account: mapRow(r[0].values[0]), updated: false, message: '账号创建成功' })
+    }
+  } catch (error) {
+    console.error('Login by refresh token error:', error)
+    if (error instanceof AccountSyncError || error?.status) {
+      return res.status(error.status || 500).json({ error: error.message })
+    }
     return res.status(500).json({ error: '内部服务器错误' })
   }
 })
@@ -601,6 +862,8 @@ router.get('/', async (req, res) => {
     const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 10))
     const search = (req.query.search || '').trim().toLowerCase()
     const openStatus = req.query.openStatus // 'open' | 'closed' | undefined
+    const planType = req.query.planType // 'team' | 'plus' | 'free' | undefined
+    const accountStatus = req.query.accountStatus // 'normal' | 'expired' | 'banned' | undefined
 
     // 构建 WHERE 条件
     const conditions = []
@@ -618,6 +881,21 @@ router.get('/', async (req, res) => {
       conditions.push('(is_open = 0 OR is_open IS NULL)')
     }
 
+    if (planType === 'free') {
+      conditions.push(`(plan_type = 'free' OR (plan_type IS NULL AND (chatgpt_account_id IS NULL OR chatgpt_account_id = '')))`)
+    } else if (planType) {
+      conditions.push('plan_type = ?')
+      params.push(planType)
+    }
+
+    if (accountStatus === 'banned') {
+      conditions.push('COALESCE(is_banned, 0) = 1')
+    } else if (accountStatus === 'expired') {
+      conditions.push(`COALESCE(is_banned, 0) = 0 AND expire_at IS NOT NULL AND TRIM(expire_at) != '' AND DATETIME(REPLACE(expire_at, '/', '-')) < DATETIME('now', 'localtime')`)
+    } else if (accountStatus === 'normal') {
+      conditions.push(`COALESCE(is_banned, 0) = 0 AND (expire_at IS NULL OR TRIM(expire_at) = '' OR DATETIME(REPLACE(expire_at, '/', '-')) IS NULL OR DATETIME(REPLACE(expire_at, '/', '-')) >= DATETIME('now', 'localtime'))`)
+    }
+
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
     // 查询总数
@@ -629,7 +907,7 @@ router.get('/', async (req, res) => {
 	    const dataResult = db.exec(`
 	      SELECT id, email, token, refresh_token, user_count, invite_count, chatgpt_account_id, oai_device_id, expire_at, is_open,
 	             COALESCE(is_banned, 0) AS is_banned,
-	             created_at, updated_at
+	             created_at, updated_at, plan_type, quota_json
 	      FROM gpt_accounts
 	      ${whereClause}
 	      ORDER BY created_at DESC
@@ -650,7 +928,9 @@ router.get('/', async (req, res) => {
 	      isDemoted: false,
 	      isBanned: Boolean(row[10]),
 	      createdAt: row[11],
-	      updatedAt: row[12]
+	      updatedAt: row[12],
+	      planType: row[13] || null,
+	      quota: row[14] ? (() => { try { return JSON.parse(row[14]) } catch { return null } })() : null
 	    }))
 
     res.json({
@@ -670,7 +950,7 @@ router.get('/:id', async (req, res) => {
 	    const result = db.exec(`
 	      SELECT id, email, token, refresh_token, user_count, invite_count, chatgpt_account_id, oai_device_id, expire_at, is_open,
 	             COALESCE(is_banned, 0) AS is_banned,
-	             created_at, updated_at
+	             created_at, updated_at, plan_type, quota_json
 	      FROM gpt_accounts
 	      WHERE id = ?
 	    `, [req.params.id])
@@ -694,7 +974,9 @@ router.get('/:id', async (req, res) => {
 		      isDemoted: false,
 		      isBanned: Boolean(row[10]),
 		      createdAt: row[11],
-		      updatedAt: row[12]
+		      updatedAt: row[12],
+		      planType: row[13] || null,
+		      quota: row[14] ? (() => { try { return JSON.parse(row[14]) } catch { return null } })() : null
 		    }
 
     res.json(account)
@@ -724,8 +1006,8 @@ router.post('/', async (req, res) => {
     const normalizedOaiDeviceId = String(oaiDeviceId ?? '').trim()
     const normalizedExpireAt = normalizeExpireAt(expireAt)
 
-    if (!email || !token || !normalizedChatgptAccountId) {
-      return res.status(400).json({ error: 'Email, token and ChatGPT ID are required' })
+    if (!email || !token) {
+      return res.status(400).json({ error: 'Email and token are required' })
     }
 
     if (expireAt != null && String(expireAt).trim() && !normalizedExpireAt) {
@@ -751,7 +1033,7 @@ router.post('/', async (req, res) => {
 		    const accountResult = db.exec(`
 		      SELECT id, email, token, refresh_token, user_count, invite_count, chatgpt_account_id, oai_device_id, expire_at, is_open,
 		             COALESCE(is_banned, 0) AS is_banned,
-		             created_at, updated_at
+		             created_at, updated_at, plan_type
 		      FROM gpt_accounts
 		      WHERE id = last_insert_rowid()
 		    `)
@@ -770,7 +1052,8 @@ router.post('/', async (req, res) => {
 		      isDemoted: false,
 		      isBanned: Boolean(row[10]),
 		      createdAt: row[11],
-		      updatedAt: row[12]
+		      updatedAt: row[12],
+		      planType: row[13] || null
 		    }
 
     // 生成随机兑换码的辅助函数
@@ -865,8 +1148,8 @@ router.put('/:id', async (req, res) => {
     const isBannedValue = normalizedIsBanned ? 1 : 0
     const shouldApplyBanSideEffects = shouldUpdateIsBanned && isBannedValue === 1
 
-    if (!email || !token || !normalizedChatgptAccountId) {
-      return res.status(400).json({ error: 'Email, token and ChatGPT ID are required' })
+    if (!email || !token) {
+      return res.status(400).json({ error: 'Email and token are required' })
     }
 
     if (hasExpireAt && expireAt != null && String(expireAt).trim() && !normalizedExpireAt) {
@@ -929,7 +1212,7 @@ router.put('/:id', async (req, res) => {
 		    const result = db.exec(`
 		      SELECT id, email, token, refresh_token, user_count, invite_count, chatgpt_account_id, oai_device_id, expire_at, is_open,
 		             COALESCE(is_banned, 0) AS is_banned,
-		             created_at, updated_at
+		             created_at, updated_at, plan_type
 		      FROM gpt_accounts
 		      WHERE id = ?
 		    `, [req.params.id])
@@ -948,7 +1231,8 @@ router.put('/:id', async (req, res) => {
 		      isDemoted: false,
 		      isBanned: Boolean(row[10]),
 		      createdAt: row[11],
-		      updatedAt: row[12]
+		      updatedAt: row[12],
+		      planType: row[13] || null
 		    }
 
     res.json(account)
@@ -1102,6 +1386,29 @@ router.delete('/:id', async (req, res) => {
   }
 })
 
+// 批量删除账号
+router.post('/batch-delete', async (req, res) => {
+  try {
+    const { ids } = req.body
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: '请提供要删除的账号 ID 列表' })
+    }
+
+    const db = await getDatabase()
+    const placeholders = ids.map(() => '?').join(',')
+    const countResult = db.exec(`SELECT COUNT(*) FROM gpt_accounts WHERE id IN (${placeholders})`, ids)
+    const found = countResult[0]?.values?.[0]?.[0] || 0
+
+    db.run(`DELETE FROM gpt_accounts WHERE id IN (${placeholders})`, ids)
+    saveDatabase()
+
+    res.json({ message: `已删除 ${found} 个账号`, deleted: found })
+  } catch (error) {
+    console.error('Batch delete GPT accounts error:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
 // 同步账号用户数量
 router.post('/:id/sync-user-count', async (req, res) => {
   try {
@@ -1220,6 +1527,39 @@ router.delete('/:id/invites', async (req, res) => {
   }
 })
 
+// 获取账号的 Codex 配额（5h/7d 使用率），并保存到数据库
+router.post('/:id/fetch-quota', async (req, res) => {
+  try {
+    const db = await getDatabase()
+    const result = db.exec(
+      'SELECT id, token, chatgpt_account_id FROM gpt_accounts WHERE id = ?',
+      [req.params.id]
+    )
+    if (result.length === 0 || result[0].values.length === 0) {
+      return res.status(404).json({ error: 'Account not found' })
+    }
+    const [id, token, chatgptAccountId] = result[0].values[0]
+    if (!token) {
+      return res.status(400).json({ error: '账号 token 为空，无法获取配额' })
+    }
+
+    const quota = await fetchCodexQuota(token, chatgptAccountId || null)
+    const quotaJson = JSON.stringify(quota)
+
+    db.run(
+      `UPDATE gpt_accounts SET quota_json = ?, updated_at = DATETIME('now', 'localtime') WHERE id = ?`,
+      [quotaJson, id]
+    )
+    await saveDatabase()
+    return res.json({ quota })
+  } catch (error) {
+    console.error('Fetch quota error:', error)
+    const msg = error?.message || '内部服务器错误'
+    const status = msg.includes('401') ? 401 : 500
+    return res.status(status).json({ error: msg })
+  }
+})
+
 // 刷新账号的 access token
 router.post('/:id/refresh-token', async (req, res) => {
   try {
@@ -1274,7 +1614,7 @@ router.post('/:id/refresh-token', async (req, res) => {
     saveDatabase()
 
 	    const updatedResult = db.exec(
-	      'SELECT id, email, token, refresh_token, user_count, invite_count, chatgpt_account_id, oai_device_id, expire_at, is_open, COALESCE(is_banned, 0) AS is_banned, created_at, updated_at FROM gpt_accounts WHERE id = ?',
+	      'SELECT id, email, token, refresh_token, user_count, invite_count, chatgpt_account_id, oai_device_id, expire_at, is_open, COALESCE(is_banned, 0) AS is_banned, created_at, updated_at, plan_type FROM gpt_accounts WHERE id = ?',
 	      [req.params.id]
 	    )
     const updatedRow = updatedResult[0].values[0]
@@ -1292,7 +1632,8 @@ router.post('/:id/refresh-token', async (req, res) => {
 	      isDemoted: false,
 	      isBanned: Boolean(updatedRow[10]),
 	      createdAt: updatedRow[11],
-	      updatedAt: updatedRow[12]
+	      updatedAt: updatedRow[12],
+	      planType: updatedRow[13] || null
 	    }
 
     res.json({

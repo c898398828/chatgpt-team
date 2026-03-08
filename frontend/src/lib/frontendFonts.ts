@@ -33,5 +33,5 @@ export const normalizeFrontendFontKey = (value: unknown): FrontendFontKey => {
 export const resolveFrontendFontFamily = (key: unknown): string => {
   const normalized = normalizeFrontendFontKey(key)
   const found = FRONTEND_FONT_OPTIONS.find(item => item.key === normalized)
-  return found?.family || FRONTEND_FONT_OPTIONS[0].family
+  return found?.family || FRONTEND_FONT_OPTIONS[0]?.family || 'system-ui, sans-serif'
 }

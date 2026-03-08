@@ -17,8 +17,11 @@
 - 后端：`npm run dev --workspace=backend`
 - 前端：`npm run dev --workspace=frontend`
 
+更多开发细节见 [docs/development.md](docs/development.md)。
+
 ## 提交规范
 
 - 不要提交任何密钥/Token/账号信息；提交前建议跑一遍 `OPEN_SOURCE_CHECKLIST.md` 的扫描命令。
+- 不要提交 `Codex_register/output/` 下的注册产物；其中可能包含邮箱、密码和 token。
 - 变更尽量保持小而清晰，PR 描述包含动机、影响范围、验证方式。
 

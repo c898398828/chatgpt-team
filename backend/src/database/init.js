@@ -342,6 +342,7 @@ const ensureRbacTables = (database) => {
       { key: 'stats', label: '数据统计', path: '/admin/stats', sortOrder: 1 },
       { key: 'user_info', label: '用户信息', path: '/admin/user-info', sortOrder: 2 },
       { key: 'accounts', label: '账号管理', path: '/admin/accounts', sortOrder: 3 },
+      { key: 'batch_register', label: '批量注册', path: '/admin/batch-register', sortOrder: 3.5 },
       { key: 'redemption_codes', label: '兑换码管理', path: '/admin/redemption-codes', sortOrder: 4 },
       { key: 'order_management', label: '订单管理', path: '', sortOrder: 6 },
       { key: 'purchase_orders', label: '支付订单', path: '/admin/purchase-orders', parentKey: 'order_management', sortOrder: 1 },
@@ -1930,6 +1931,18 @@ export async function initDatabase() {
 	              console.log('已添加 ban_processed 列到 gpt_accounts 表')
 	              saveDatabase()
 	            }
+
+            if (!columns.includes('plan_type')) {
+              database.run('ALTER TABLE gpt_accounts ADD COLUMN plan_type TEXT DEFAULT NULL')
+              console.log('已添加 plan_type 列到 gpt_accounts 表')
+              saveDatabase()
+            }
+
+            if (!columns.includes('quota_json')) {
+              database.run('ALTER TABLE gpt_accounts ADD COLUMN quota_json TEXT DEFAULT NULL')
+              console.log('已添加 quota_json 列到 gpt_accounts 表')
+              saveDatabase()
+            }
 	          }
 
 	          // 检查 redemption_codes 表的列
@@ -2067,6 +2080,8 @@ export async function initDatabase() {
 	      is_demoted INTEGER DEFAULT 0,
 	      is_banned INTEGER DEFAULT 0,
 	      ban_processed INTEGER DEFAULT 0,
+	      plan_type TEXT DEFAULT NULL,
+	      quota_json TEXT DEFAULT NULL,
 	      created_at DATETIME DEFAULT (DATETIME('now', 'localtime')),
 	      updated_at DATETIME DEFAULT (DATETIME('now', 'localtime'))
 	    )
@@ -2162,6 +2177,16 @@ export async function initDatabase() {
 	        database.run('ALTER TABLE gpt_accounts ADD COLUMN ban_processed INTEGER DEFAULT 0')
 	        console.log('已添加 ban_processed 列到 gpt_accounts 表')
 	      }
+
+	      if (!columns.includes('plan_type')) {
+	        database.run('ALTER TABLE gpt_accounts ADD COLUMN plan_type TEXT DEFAULT NULL')
+	        console.log('已添加 plan_type 列到 gpt_accounts 表')
+	      }
+
+      if (!columns.includes('quota_json')) {
+        database.run('ALTER TABLE gpt_accounts ADD COLUMN quota_json TEXT DEFAULT NULL')
+        console.log('已添加 quota_json 列到 gpt_accounts 表')
+      }
 	    }
 	  } catch (err) {
 	    console.log('列检查/添加已跳过:', err.message)

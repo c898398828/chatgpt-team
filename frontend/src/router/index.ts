@@ -16,6 +16,7 @@ import WaitingRoomView from '../views/WaitingRoomView.vue'
 import MainLayout from '../views/MainLayout.vue'
 import AccountsView from '../views/AccountsView.vue'
 import UserManagementView from '../views/UserManagementView.vue'
+import BatchRegisterView from '../views/BatchRegisterView.vue'
 import SettingsView from '../views/SettingsView.vue'
 import RedemptionCodesView from '../views/RedemptionCodesView.vue'
 import AppleShowcase from '../views/AppleShowcase.vue'
@@ -185,6 +186,12 @@ const router = createRouter({
           name: 'user-management',
           component: UserManagementView,
           meta: { requiredMenuKey: 'user_management' },
+        },
+        {
+          path: 'batch-register',
+          name: 'batch-register',
+          component: BatchRegisterView,
+          meta: { requiredMenuKey: 'batch_register', superAdminOnly: true },
         },
         {
           path: 'redemption-codes',

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { API_URL, authService, gptAccountService, openaiOAuthService, userService, type AccountStatus, type CheckAccountStatusItem, type CheckAccountStatusResponse, type GptAccount, type CreateGptAccountDto, type SyncUserCountResponse, type GptAccountsListParams, type ChatgptAccountInviteItem, type ChatgptAccountCheckInfo, type OpenAIOAuthSession, type OpenAIOAuthExchangeResult } from '@/services/api'
+import { API_URL, adminService, authService, gptAccountService, openaiOAuthService, userService, type AccountStatus, type CheckAccountStatusItem, type CheckAccountStatusResponse, type GptAccount, type CodexQuota, type CreateGptAccountDto, type SyncUserCountResponse, type GptAccountsListParams, type ChatgptAccountInviteItem, type ChatgptAccountCheckInfo, type OpenAIOAuthSession, type OpenAIOAuthExchangeResult } from '@/services/api'
 import { formatShanghaiDate } from '@/lib/datetime'
 import { useAppConfigStore } from '@/stores/appConfig'
 import {
@@ -22,13 +22,14 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast'
 import AppleNativeDateTimeInput from '@/components/ui/apple/NativeDateTimeInput.vue'
-import { Plus, Eye, EyeOff, RefreshCw, Ban, FilePenLine, Trash2, AlertTriangle, X, FolderOpen, Search } from 'lucide-vue-next'
+import { Plus, Eye, EyeOff, RefreshCw, Ban, FilePenLine, Trash2, AlertTriangle, X, FolderOpen, Search, Upload, Download, Copy, KeyRound, LayoutGrid, TableProperties, Activity } from 'lucide-vue-next'
 
 const router = useRouter()
 const accounts = ref<GptAccount[]>([])
@@ -37,10 +38,16 @@ const error = ref('')
 const showDialog = ref(false)
 const editingAccount = ref<GptAccount | null>(null)
 const paginationMeta = ref({ page: 1, pageSize: 10, total: 0 })
+const pageSizeOptions = ['10', '20', '50', '100'] as const
+const copyEmailTitlePrefix = '\u590d\u5236\u90ae\u7bb1\uff1a'
+const quotaLabel5h = '\u0035\u5c0f\u65f6\u914d\u989d'
+const quotaLabel7d = '\u0037\u5929\u914d\u989d'
 
 // 搜索和筛选状态
 const searchQuery = ref('')
 const openStatusFilter = ref<'all' | 'open' | 'closed'>('all')
+const planTypeFilter = ref<'all' | 'team' | 'plus' | 'free'>('all')
+const accountStatusFilter = ref<'all' | 'normal' | 'expired' | 'banned'>('all')
 let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 const { success: showSuccessToast, error: showErrorToast, warning: showWarningToast, info: showInfoToast } = useToast()
 const appConfigStore = useAppConfigStore()
@@ -48,6 +55,48 @@ const dateFormatOptions = computed(() => ({
   timeZone: appConfigStore.timezone,
   locale: appConfigStore.locale,
 }))
+
+// 批量选择
+const selectedIds = ref<Set<number>>(new Set())
+const isAllSelected = computed(() => accounts.value.length > 0 && accounts.value.every(a => selectedIds.value.has(a.id)))
+const isPartialSelected = computed(() => selectedIds.value.size > 0 && !isAllSelected.value)
+const batchDeleting = ref(false)
+
+const toggleSelectAll = () => {
+  if (isAllSelected.value) {
+    selectedIds.value = new Set()
+  } else {
+    selectedIds.value = new Set(accounts.value.map(a => a.id))
+  }
+}
+
+const toggleSelectAccount = (id: number) => {
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) {
+    next.delete(id)
+  } else {
+    next.add(id)
+  }
+  selectedIds.value = next
+}
+
+const handleBatchDelete = async () => {
+  const ids = Array.from(selectedIds.value)
+  if (ids.length === 0) return
+  if (!confirm(`确定要删除选中的 ${ids.length} 个账号吗？此操作不可撤销。`)) return
+
+  batchDeleting.value = true
+  try {
+    const res = await gptAccountService.batchDelete(ids)
+    showSuccessToast(res.message || `已删除 ${res.deleted} 个账号`)
+    selectedIds.value = new Set()
+    await loadAccounts()
+  } catch (e: any) {
+    showErrorToast(e.response?.data?.error || '批量删除失败')
+  } finally {
+    batchDeleting.value = false
+  }
+}
 
 // Teleport 目标是否存在
 const teleportReady = ref(false)
@@ -80,6 +129,9 @@ onUnmounted(() => {
 
 // 计算总页数
 const totalPages = computed(() => Math.max(1, Math.ceil(paginationMeta.value.total / paginationMeta.value.pageSize)))
+const pageNumberOptions = computed(() =>
+  Array.from({ length: totalPages.value }, (_, index) => String(index + 1))
+)
 
 // 同步相关状态
 const syncingAccountId = ref<number | null>(null)
@@ -128,6 +180,104 @@ const formData = ref<CreateGptAccountDto>({
   oaiDeviceId: '',
   expireAt: ''
 })
+
+// 视图模式：'table'（表格）| 'card'（卡片）
+const viewMode = ref<'table' | 'card'>('table')
+
+// 正在获取配额的账号 ID 集合
+const fetchingQuotaIds = ref<Set<number>>(new Set())
+
+// ─── 配额工具函数 ─────────────────────────────────────────────────────────────
+
+/** 将秒数转为可读的剩余时间字符串，如 "5d19h15m" */
+const formatResetSeconds = (seconds?: number): string => {
+  if (seconds == null || seconds <= 0) return ''
+  const d = Math.floor(seconds / 86400)
+  const h = Math.floor((seconds % 86400) / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const parts: string[] = []
+  if (d > 0) parts.push(`${d}d`)
+  if (h > 0) parts.push(`${h}h`)
+  if (m > 0) parts.push(`${m}m`)
+  return parts.join('') || '<1m'
+}
+
+/** 根据剩余额度百分比（0-100）返回进度条颜色类，剩余越少越红 */
+const quotaBarColor = (remainPercent: number): string => {
+  if (remainPercent <= 10) return 'bg-red-500'
+  if (remainPercent <= 30) return 'bg-yellow-400'
+  return 'bg-green-500'
+}
+
+// 获取单个账号配额（带 toast 提示）
+const handleFetchQuota = async (account: GptAccount) => {
+  if (fetchingQuotaIds.value.has(account.id)) return
+  const next = new Set(fetchingQuotaIds.value)
+  next.add(account.id)
+  fetchingQuotaIds.value = next
+  try {
+    const result = await gptAccountService.fetchQuota(account.id)
+    // 直接更新本地列表中的配额，无需重新加载整个列表
+    const idx = accounts.value.findIndex(a => a.id === account.id)
+    if (idx !== -1) {
+      accounts.value[idx] = { ...accounts.value[idx], quota: result.quota }
+    }
+    showSuccessToast('配额已更新')
+  } catch (err: any) {
+    showErrorToast(resolveRequestError(err, '获取配额失败'))
+  } finally {
+    const next2 = new Set(fetchingQuotaIds.value)
+    next2.delete(account.id)
+    fetchingQuotaIds.value = next2
+  }
+}
+
+/**
+ * 批量静默刷新指定账号列表的配额（并发数 3，无 toast）。
+ * 用于切换卡片视图或翻页时自动预加载配额数据。
+ */
+const fetchPageQuotas = async (accs: GptAccount[]) => {
+  const CONCURRENCY = 3
+  const queue = [...accs]
+
+  const worker = async () => {
+    while (queue.length > 0) {
+      const account = queue.shift()!
+      // 已在获取中则跳过
+      if (fetchingQuotaIds.value.has(account.id)) continue
+
+      const s1 = new Set(fetchingQuotaIds.value)
+      s1.add(account.id)
+      fetchingQuotaIds.value = s1
+
+      try {
+        const result = await gptAccountService.fetchQuota(account.id)
+        const idx = accounts.value.findIndex(a => a.id === account.id)
+        if (idx !== -1) {
+          accounts.value[idx] = { ...accounts.value[idx], quota: result.quota }
+        }
+      } catch {
+        // 静默失败，不打扰用户
+      } finally {
+        const s2 = new Set(fetchingQuotaIds.value)
+        s2.delete(account.id)
+        fetchingQuotaIds.value = s2
+      }
+    }
+  }
+
+  // 启动并发 worker
+  const workerCount = Math.min(CONCURRENCY, accs.length)
+  if (workerCount > 0) {
+    await Promise.allSettled(Array.from({ length: workerCount }, worker))
+  }
+}
+
+// 新建对话框模式：'manual'（手动填写）| 'refresh-token'（Refresh Token 快速添加）
+const dialogMode = ref<'manual' | 'refresh-token'>('manual')
+const quickRefreshToken = ref('')
+const quickAddLoading = ref(false)
+const quickAddError = ref('')
 
 const checkingAccessToken = ref(false)
 const checkedChatgptAccounts = ref<ChatgptAccountCheckInfo[]>([])
@@ -522,7 +672,7 @@ const handleCheckAccessToken = async () => {
       formData.value.chatgptAccountId = checkedChatgptAccounts.value[0]?.accountId || ''
     }
 
-    applyCheckedAccountSelection(formData.value.chatgptAccountId)
+    applyCheckedAccountSelection(formData.value.chatgptAccountId || '')
     await openChatgptIdDropdown()
   } catch (err: any) {
     const message = err?.response?.data?.error || '校验失败'
@@ -544,6 +694,24 @@ const goToPage = (page: number) => {
   loadAccounts()
 }
 
+const handlePageSelect = (value: string) => {
+  const page = Number(value)
+  if (!Number.isFinite(page)) return
+  goToPage(page)
+}
+
+const handlePageSizeChange = (value: string) => {
+  const pageSize = Number(value)
+  if (!Number.isFinite(pageSize) || pageSize === paginationMeta.value.pageSize) return
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer)
+    searchDebounceTimer = null
+  }
+  paginationMeta.value.page = 1
+  paginationMeta.value.pageSize = pageSize
+  loadAccounts()
+}
+
 const loadAccounts = async () => {
   try {
     loading.value = true
@@ -560,8 +728,15 @@ const loadAccounts = async () => {
     if (openStatusFilter.value !== 'all') {
       params.openStatus = openStatusFilter.value
     }
+    if (planTypeFilter.value !== 'all') {
+      params.planType = planTypeFilter.value
+    }
+    if (accountStatusFilter.value !== 'all') {
+      params.accountStatus = accountStatusFilter.value
+    }
     const response = await gptAccountService.getAll(params)
     accounts.value = response.accounts || []
+    selectedIds.value = new Set()
     paginationMeta.value = response.pagination || { page: 1, pageSize: 10, total: 0 }
   } catch (err: any) {
     error.value = err.response?.data?.error || 'Failed to load accounts'
@@ -628,6 +803,20 @@ const filteredCheckItems = computed(() => {
   if (filter === 'all') return list
   if (filter === 'abnormal') return list.filter(item => item.status !== 'normal' || Boolean(item.refreshed))
   return list.filter(item => item.status === filter)
+})
+
+// 账号类型统计
+const planTypeSummary = computed(() => {
+  const items = checkItems.value
+  const counts = { team: 0, plus: 0, free: 0, unknown: 0 }
+  for (const item of items) {
+    const pt = item.planType || ''
+    if (pt === 'team') counts.team++
+    else if (pt === 'plus') counts.plus++
+    else if (pt === 'free') counts.free++
+    else counts.unknown++
+  }
+  return counts
 })
 
 const handleStartCheck = async () => {
@@ -897,7 +1086,7 @@ const handleSearch = () => {
 }
 
 // 监听筛选变化
-watch(openStatusFilter, () => {
+watch([openStatusFilter, planTypeFilter, accountStatusFilter], () => {
   paginationMeta.value.page = 1
   if (searchDebounceTimer) {
     clearTimeout(searchDebounceTimer)
@@ -924,6 +1113,20 @@ watch(
   }
 )
 
+// 切换到卡片视图时，立即刷新当前分页所有账号的配额
+watch(viewMode, (newMode) => {
+  if (newMode === 'card' && accounts.value.length > 0) {
+    fetchPageQuotas(accounts.value)
+  }
+})
+
+// 在卡片视图中翻页后（accounts 数组引用更新），自动刷新新页配额
+watch(accounts, (newAccs) => {
+  if (viewMode.value === 'card' && newAccs.length > 0) {
+    fetchPageQuotas(newAccs)
+  }
+})
+
 const openEditDialog = (account: GptAccount) => {
   editingAccount.value = account
 	  formData.value = {
@@ -939,15 +1142,41 @@ const openEditDialog = (account: GptAccount) => {
   showDialog.value = true
 }
 
-	const closeDialog = () => {
-	  showDialog.value = false
-	  editingAccount.value = null
-	  formData.value = { email: '', token: '', refreshToken: '', userCount: 0, isBanned: false, chatgptAccountId: '', oaiDeviceId: '', expireAt: '' }
-	  checkedChatgptAccounts.value = []
-	  checkAccessTokenError.value = ''
-	  checkingAccessToken.value = false
-	  resetOpenaiOAuthFlow()
-	}
+  const closeDialog = () => {
+    showDialog.value = false
+    editingAccount.value = null
+    formData.value = { email: '', token: '', refreshToken: '', userCount: 0, isBanned: false, chatgptAccountId: '', oaiDeviceId: '', expireAt: '' }
+    checkedChatgptAccounts.value = []
+    checkAccessTokenError.value = ''
+    checkingAccessToken.value = false
+    resetOpenaiOAuthFlow()
+    dialogMode.value = 'manual'
+    quickRefreshToken.value = ''
+    quickAddError.value = ''
+  }
+
+// Refresh Token 快速添加账号
+const handleQuickAddByRefreshToken = async () => {
+  const token = quickRefreshToken.value.trim()
+  if (!token) {
+    quickAddError.value = '请输入 Refresh Token'
+    return
+  }
+  quickAddLoading.value = true
+  quickAddError.value = ''
+  try {
+    const result = await gptAccountService.loginByRefreshToken(token)
+    showSuccessToast(result.updated ? `账号 token 已更新：${result.account.email}` : `账号创建成功：${result.account.email}`)
+    showDialog.value = false
+    quickRefreshToken.value = ''
+    dialogMode.value = 'manual'
+    await loadAccounts()
+  } catch (err: any) {
+    quickAddError.value = resolveRequestError(err, 'Refresh Token 添加失败')
+  } finally {
+    quickAddLoading.value = false
+  }
+}
 
 const handleSubmit = async () => {
   try {
@@ -959,11 +1188,6 @@ const handleSubmit = async () => {
       chatgptAccountId: formData.value.chatgptAccountId?.trim() || '',
       oaiDeviceId: formData.value.oaiDeviceId?.trim() || '',
       expireAt: fromDatetimeLocal(formData.value.expireAt?.trim() || ''),
-    }
-
-    if (!payload.chatgptAccountId) {
-      showErrorToast('ChatGPT ID 为必填')
-      return
     }
 
     if (editingAccount.value) {
@@ -1282,6 +1506,119 @@ const handleInviteSubmit = async () => {
     inviting.value = false
   }
 }
+
+// 复制 Token 操作
+const copyAccountToken = async (account: GptAccount) => {
+  const token = account.token
+  if (!token) {
+    showErrorToast('该账号暂无 Access Token')
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(token)
+    showSuccessToast('Access Token 已复制到剪贴板')
+  } catch {
+    showErrorToast('复制失败，请手动复制')
+  }
+}
+
+const copyAccountEmail = async (account: GptAccount) => {
+  const email = String(account.email || '').trim()
+  if (!email) {
+    showErrorToast('该账号暂无邮箱')
+    return
+  }
+  await copyText(email, `已复制邮箱：${email}`)
+}
+
+const copyAccountRefreshToken = async (account: GptAccount) => {
+  const refreshToken = account.refreshToken
+  if (!refreshToken) {
+    showErrorToast('该账号暂无 Refresh Token')
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(refreshToken)
+    showSuccessToast('Refresh Token 已复制到剪贴板')
+  } catch {
+    showErrorToast('复制失败，请手动复制')
+  }
+}
+
+// 导入导出（GPT 账号）
+const importLoading = ref(false)
+const importResultDialogOpen = ref(false)
+const importResults = ref<{ success: any[]; failed: any[]; skipped: any[]; total: number } | null>(null)
+const exportLoading = ref(false)
+
+const handleImportFromTokenFiles = async () => {
+  if (importLoading.value) return
+  importLoading.value = true
+  importResults.value = null
+  try {
+    const res = await adminService.importAccountsToSystem({})
+    importResults.value = res
+    importResultDialogOpen.value = true
+    const successCount = res.success?.length || 0
+    const skippedCount = res.skipped?.length || 0
+    const failedCount = res.failed?.length || 0
+    if (successCount > 0) {
+      showSuccessToast(`导入完成：新增 ${successCount}，更新 ${skippedCount}，失败 ${failedCount}`)
+      await loadAccounts()
+    } else if (skippedCount > 0) {
+      showInfoToast(`无新增账号，已更新 ${skippedCount} 个`)
+      await loadAccounts()
+    } else if (res.total === 0) {
+      showWarningToast('output 目录中没有找到 token JSON 文件')
+    } else {
+      showErrorToast(`导入失败 ${failedCount} 个，无新增`)
+    }
+  } catch (e: any) {
+    showErrorToast(e.response?.data?.error || '导入失败')
+  } finally {
+    importLoading.value = false
+  }
+}
+
+const exportAccountsJson = async () => {
+  exportLoading.value = true
+  try {
+    const allAccounts: any[] = []
+    let page = 1
+    const pageSize = 100
+    let hasMore = true
+    while (hasMore) {
+      const res = await gptAccountService.getAll({ page, pageSize })
+      const batch = res.accounts || []
+      for (const a of batch) {
+        allAccounts.push({
+          email: a.email,
+          isOpen: a.isOpen,
+          isBanned: a.isBanned,
+          userCount: a.userCount,
+          createdAt: a.createdAt,
+        })
+      }
+      hasMore = batch.length === pageSize && allAccounts.length < (res.pagination?.total || 0)
+      page++
+    }
+    const json = JSON.stringify(allAccounts, null, 2)
+    const blob = new Blob([json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `accounts_export_${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    showSuccessToast(`已导出 ${allAccounts.length} 个账号`)
+  } catch (e: any) {
+    showErrorToast(e.response?.data?.error || '导出失败')
+  } finally {
+    exportLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -1289,6 +1626,24 @@ const handleInviteSubmit = async () => {
     <!-- Header Actions -->
     <Teleport v-if="teleportReady" to="#header-actions">
       <div class="flex items-center gap-3 flex-wrap justify-end">
+        <Button
+          variant="outline"
+          class="bg-white border-gray-200 text-gray-700 hover:bg-gray-50 h-10 rounded-xl px-4"
+          :disabled="importLoading"
+          @click="handleImportFromTokenFiles"
+        >
+          <Upload class="w-4 h-4 mr-2" />
+          {{ importLoading ? '导入中...' : '导入账号' }}
+        </Button>
+        <Button
+          variant="outline"
+          class="bg-white border-gray-200 text-gray-700 hover:bg-gray-50 h-10 rounded-xl px-4"
+          :disabled="exportLoading"
+          @click="exportAccountsJson"
+        >
+          <Download class="w-4 h-4 mr-2" />
+          {{ exportLoading ? '导出中...' : '导出账号' }}
+        </Button>
         <Button
           variant="outline"
           class="bg-white border-gray-200 text-gray-700 hover:bg-gray-50 h-10 rounded-xl px-4"
@@ -1340,6 +1695,52 @@ const handleInviteSubmit = async () => {
             <SelectItem value="closed">未开放</SelectItem>
           </SelectContent>
         </Select>
+
+        <Select v-model="planTypeFilter">
+          <SelectTrigger class="h-11 w-[140px] bg-white border-transparent shadow-[0_2px_10px_rgba(0,0,0,0.03)] rounded-xl">
+            <SelectValue placeholder="账号类型" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部类型</SelectItem>
+            <SelectItem value="team">Team</SelectItem>
+            <SelectItem value="plus">Plus</SelectItem>
+            <SelectItem value="free">Free</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select v-model="accountStatusFilter">
+          <SelectTrigger class="h-11 w-[140px] bg-white border-transparent shadow-[0_2px_10px_rgba(0,0,0,0.03)] rounded-xl">
+            <SelectValue placeholder="账号状态" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部账号状态</SelectItem>
+            <SelectItem value="normal">正常</SelectItem>
+            <SelectItem value="expired">已过期</SelectItem>
+            <SelectItem value="banned">已封号</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <!-- 视图切换（桌面端） -->
+      <div class="hidden md:flex items-center gap-0.5 bg-white shadow-[0_2px_10px_rgba(0,0,0,0.04)] rounded-xl p-1 shrink-0">
+        <button
+          type="button"
+          class="p-2 rounded-lg transition-all"
+          :class="viewMode === 'table' ? 'bg-gray-100 text-gray-900' : 'text-gray-400 hover:text-gray-700'"
+          @click="viewMode = 'table'"
+          title="表格视图"
+        >
+          <TableProperties class="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          class="p-2 rounded-lg transition-all"
+          :class="viewMode === 'card' ? 'bg-gray-100 text-gray-900' : 'text-gray-400 hover:text-gray-700'"
+          @click="viewMode = 'card'"
+          title="卡片视图"
+        >
+          <LayoutGrid class="w-4 h-4" />
+        </button>
       </div>
     </div>
 
@@ -1373,18 +1774,52 @@ const handleInviteSubmit = async () => {
 
       <!-- Table & Mobile List -->
       <div v-else>
+        <!-- 批量操作栏 -->
+        <div
+          v-if="selectedIds.size > 0"
+          class="flex items-center gap-4 px-6 py-3 bg-blue-50 border-b border-blue-100"
+        >
+          <span class="text-sm font-medium text-blue-700">已选择 {{ selectedIds.size }} 个账号</span>
+          <Button
+            size="sm"
+            variant="destructive"
+            class="h-8 rounded-lg px-3 text-xs"
+            :disabled="batchDeleting"
+            @click="handleBatchDelete"
+          >
+            <Trash2 class="w-3.5 h-3.5 mr-1.5" />
+            {{ batchDeleting ? '删除中...' : '批量删除' }}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            class="h-8 rounded-lg px-3 text-xs text-gray-500"
+            @click="selectedIds = new Set()"
+          >
+            取消选择
+          </Button>
+        </div>
+
         <!-- Desktop Table -->
-        <div class="hidden md:block overflow-x-auto">
+        <div v-if="viewMode === 'table'" class="hidden md:block overflow-x-auto">
           <table class="w-full">
             <thead>
 	              <tr class="border-b border-gray-100 bg-gray-50/50">
+	                <th class="w-12 px-4 py-5">
+	                  <input
+	                    type="checkbox"
+	                    class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+	                    :checked="isAllSelected"
+	                    :indeterminate.prop="isPartialSelected"
+	                    @change="toggleSelectAll"
+	                  />
+	                </th>
 	                <th class="px-6 py-5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">ID</th>
 	                <th class="px-6 py-5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">邮箱</th>
 	                <th class="px-6 py-5 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider">状态</th>
 	                <th class="px-6 py-5 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider">已加入</th>
 	                <th class="px-6 py-5 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider">待加入</th>
 	                <th class="px-6 py-5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">过期时间</th>
-	                <th class="px-6 py-5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">创建时间</th>
 	                <th class="px-6 py-5 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">操作</th>
 	              </tr>
             </thead>
@@ -1393,20 +1828,47 @@ const handleInviteSubmit = async () => {
                 v-for="account in accounts"
                 :key="account.id"
                 class="group hover:bg-blue-50/30 transition-colors duration-200"
+                :class="{ 'bg-blue-50/50': selectedIds.has(account.id) }"
               >
+                <td class="w-12 px-4 py-5">
+                  <input
+                    type="checkbox"
+                    class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    :checked="selectedIds.has(account.id)"
+                    @change="toggleSelectAccount(account.id)"
+                  />
+                </td>
                 <td class="px-6 py-5 text-sm font-medium text-blue-500">#{{ account.id }}</td>
 	                <td class="px-6 py-5">
 	                  <div class="flex items-center gap-3">
 	                    <div class="w-8 h-8 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center text-xs font-bold text-gray-600">
 	                      {{ account.email.charAt(0).toUpperCase() }}
 	                    </div>
-                      <div class="min-w-0">
+                      <div
+                        class="min-w-0 cursor-pointer text-left rounded-lg transition-colors hover:bg-blue-50/60 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        :title="copyEmailTitlePrefix + account.email"
+                        tabindex="0"
+                        @click="copyAccountEmail(account)"
+                        @keydown.enter.prevent="copyAccountEmail(account)"
+                        @keydown.space.prevent="copyAccountEmail(account)"
+                      >
                         <div class="flex flex-wrap items-center gap-2">
                           <span
                             class="text-sm font-medium break-all"
                             :class="account.isBanned ? 'text-red-600' : 'text-gray-900'"
                           >
                             {{ account.email }}
+                          </span>
+                          <span
+                            v-if="account.planType"
+                            class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
+                            :class="account.planType === 'team'
+                              ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                              : account.planType === 'plus'
+                                ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                                : 'bg-gray-100 text-gray-600 border border-gray-200'"
+                          >
+                            {{ account.planType }}
                           </span>
                         </div>
                       </div>
@@ -1431,7 +1893,6 @@ const handleInviteSubmit = async () => {
 	                  </span>
 	                </td>
 	                <td class="px-6 py-5 text-sm text-gray-500 font-mono">{{ account.expireAt || '-' }}</td>
-	                <td class="px-6 py-5 text-sm text-gray-500">{{ formatShanghaiDate(account.createdAt, dateFormatOptions) }}</td>
 	                <td class="px-6 py-5 text-right">
                   <div class="flex items-center justify-end gap-1">
                     <!-- Toggle Open -->
@@ -1477,10 +1938,33 @@ const handleInviteSubmit = async () => {
                       <Ban v-else class="w-4 h-4" />
                     </Button>
 
+                    <!-- Copy Access Token -->
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      class="h-8 w-8 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
+                      @click="copyAccountToken(account)"
+                      title="复制 Access Token"
+                    >
+                      <Copy class="w-4 h-4" />
+                    </Button>
+
+                    <!-- Copy Refresh Token -->
+                    <Button
+                      v-if="account.refreshToken"
+                      size="icon"
+                      variant="ghost"
+                      class="h-8 w-8 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg"
+                      @click="copyAccountRefreshToken(account)"
+                      title="复制 Refresh Token"
+                    >
+                      <KeyRound class="w-4 h-4" />
+                    </Button>
+
                     <!-- Edit -->
-                    <Button 
-                      size="icon" 
-                      variant="ghost" 
+                    <Button
+                      size="icon"
+                      variant="ghost"
                       class="h-8 w-8 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
                       @click="openEditDialog(account)"
                       title="编辑"
@@ -1489,9 +1973,9 @@ const handleInviteSubmit = async () => {
                     </Button>
 
                     <!-- Delete -->
-                    <Button 
-                      size="icon" 
-                      variant="ghost" 
+                    <Button
+                      size="icon"
+                      variant="ghost"
                       class="h-8 w-8 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
                       @click="handleDelete(account.id)"
                       title="删除"
@@ -1505,6 +1989,163 @@ const handleInviteSubmit = async () => {
           </table>
         </div>
 
+        <!-- Desktop Card Grid -->
+        <div v-if="viewMode === 'card'" class="hidden md:block p-6">
+          <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div
+              v-for="account in accounts"
+              :key="account.id"
+              class="group relative bg-white border rounded-2xl p-5 shadow-sm transition-all hover:shadow-md hover:border-blue-100"
+              :class="[
+                selectedIds.has(account.id) ? 'border-blue-300 bg-blue-50/30' : 'border-gray-100',
+                account.isBanned ? '!border-red-100' : ''
+              ]"
+            >
+              <!-- 卡片头部：头像 + 邮箱 + 状态 -->
+              <div class="flex items-start justify-between mb-3">
+                <div class="flex items-center gap-3 min-w-0">
+                  <!-- 复选框 -->
+                  <input
+                    type="checkbox"
+                    class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer shrink-0"
+                    :checked="selectedIds.has(account.id)"
+                    @change="toggleSelectAccount(account.id)"
+                  />
+                  <!-- 头像 -->
+                  <div
+                    class="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold shrink-0"
+                    :class="account.isBanned ? 'bg-red-100 text-red-600' : 'bg-gradient-to-br from-gray-100 to-gray-200 text-gray-600'"
+                  >
+                    {{ account.email.charAt(0).toUpperCase() }}
+                  </div>
+                  <!-- 邮箱 + 类型 -->
+                  <div
+                    class="min-w-0 cursor-pointer text-left rounded-lg transition-colors hover:bg-blue-50/60 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    :title="copyEmailTitlePrefix + account.email"
+                    tabindex="0"
+                    @click="copyAccountEmail(account)"
+                    @keydown.enter.prevent="copyAccountEmail(account)"
+                    @keydown.space.prevent="copyAccountEmail(account)"
+                  >
+                    <p
+                      class="text-sm font-semibold truncate max-w-[150px]"
+                      :class="account.isBanned ? 'text-red-600' : 'text-gray-900'"
+                    >{{ account.email }}</p>
+                    <div class="flex flex-wrap items-center gap-1.5 mt-0.5">
+                      <span class="text-xs text-blue-400 font-medium">#{{ account.id }}</span>
+                      <span
+                        v-if="account.planType"
+                        class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
+                        :class="account.planType === 'team'
+                          ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                          : account.planType === 'plus'
+                            ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                            : 'bg-gray-100 text-gray-600 border border-gray-200'"
+                      >{{ account.planType }}</span>
+                    </div>
+                  </div>
+                </div>
+                <!-- 状态 + 开放标记 -->
+                <div class="flex flex-col items-end gap-1.5 shrink-0 ml-2">
+                  <span
+                    class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border"
+                    :class="statusBadge(getAccountListStatus(account)).class"
+                  >{{ statusBadge(getAccountListStatus(account)).label }}</span>
+                  <span
+                    class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold"
+                    :class="account.isOpen ? 'bg-green-50 text-green-600 border border-green-200' : 'bg-gray-50 text-gray-400 border border-gray-200'"
+                  >{{ account.isOpen ? '已开放' : '未开放' }}</span>
+                </div>
+              </div>
+
+              <!-- 统计信息行 -->
+              <div class="flex items-center gap-2 mb-3 flex-wrap">
+                <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-50 text-blue-600 border border-blue-100">
+                  {{ account.userCount }} 人
+                </span>
+                <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold bg-purple-50 text-purple-600 border border-purple-100">
+                  {{ account.inviteCount ?? 0 }} 待
+                </span>
+                <span v-if="account.expireAt" class="text-xs text-gray-400 font-mono ml-auto">
+                  到期 {{ account.expireAt.slice(0, 10) }}
+                </span>
+              </div>
+
+              <!-- 配额信息（显示剩余额度：100 - 已使用%） -->
+              <div v-if="account.quota && !account.quota.is_forbidden" class="mb-3 space-y-1.5 bg-gray-50/70 rounded-xl p-3">
+                <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Codex 剩余额度</p>
+                <div v-if="account.quota.codex_5h_used_percent != null" class="space-y-1">
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-gray-500">{{ quotaLabel5h }}</span>
+                    <span class="font-mono font-semibold" :class="(100 - (account.quota.codex_5h_used_percent ?? 0)) <= 10 ? 'text-red-600' : (100 - (account.quota.codex_5h_used_percent ?? 0)) <= 30 ? 'text-yellow-600' : 'text-green-600'">
+                      剩余 {{ Math.round(100 - (account.quota.codex_5h_used_percent ?? 0)) }}%
+                      <span v-if="account.quota.codex_5h_reset_after_seconds" class="text-gray-400 font-normal ml-1">({{ formatResetSeconds(account.quota.codex_5h_reset_after_seconds) }}后重置)</span>
+                    </span>
+                  </div>
+                  <div class="h-1.5 w-full rounded-full bg-gray-200 overflow-hidden">
+                    <div class="h-1.5 rounded-full transition-all" :class="quotaBarColor(100 - (account.quota.codex_5h_used_percent ?? 0))" :style="{ width: `${Math.max(0, Math.min(100, 100 - (account.quota.codex_5h_used_percent ?? 0)))}%` }"></div>
+                  </div>
+                </div>
+                <div v-if="account.quota.codex_7d_used_percent != null" class="space-y-1">
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-gray-500">{{ quotaLabel7d }}</span>
+                    <span class="font-mono font-semibold" :class="(100 - (account.quota.codex_7d_used_percent ?? 0)) <= 10 ? 'text-red-600' : (100 - (account.quota.codex_7d_used_percent ?? 0)) <= 30 ? 'text-yellow-600' : 'text-green-600'">
+                      剩余 {{ Math.round(100 - (account.quota.codex_7d_used_percent ?? 0)) }}%
+                      <span v-if="account.quota.codex_7d_reset_after_seconds" class="text-gray-400 font-normal ml-1">({{ formatResetSeconds(account.quota.codex_7d_reset_after_seconds) }}后重置)</span>
+                    </span>
+                  </div>
+                  <div class="h-1.5 w-full rounded-full bg-gray-200 overflow-hidden">
+                    <div class="h-1.5 rounded-full transition-all" :class="quotaBarColor(100 - (account.quota.codex_7d_used_percent ?? 0))" :style="{ width: `${Math.max(0, Math.min(100, 100 - (account.quota.codex_7d_used_percent ?? 0)))}%` }"></div>
+                  </div>
+                </div>
+              </div>
+              <div v-else-if="account.quota && account.quota.is_forbidden" class="mb-3 px-3 py-2 bg-red-50 rounded-xl text-xs text-red-500 font-medium">Codex 已被限制</div>
+
+              <!-- 操作按钮 -->
+              <div class="flex items-center justify-between pt-3 border-t border-gray-50 gap-0.5 flex-wrap">
+                <!-- 获取配额 -->
+                <Button size="icon" variant="ghost" class="h-8 w-8 rounded-lg" :class="account.quota ? 'text-indigo-500 bg-indigo-50 hover:bg-indigo-100' : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'" :disabled="fetchingQuotaIds.has(account.id)" @click="handleFetchQuota(account)" title="获取配额">
+                  <span v-if="fetchingQuotaIds.has(account.id)" class="animate-spin text-xs">⏳</span>
+                  <Activity v-else class="w-4 h-4" />
+                </Button>
+                <!-- 开放/隐藏 -->
+                <Button size="icon" variant="ghost" class="h-8 w-8 rounded-lg" :class="account.isOpen ? 'text-gray-400 hover:text-gray-900' : 'text-blue-500 bg-blue-50 hover:bg-blue-100'" @click="handleToggleOpen(account)" :disabled="togglingOpenAccountId === account.id" :title="account.isOpen ? '隐藏账号' : '开放账号'">
+                  <span v-if="togglingOpenAccountId === account.id" class="animate-spin">⏳</span>
+                  <template v-else>
+                    <EyeOff v-if="account.isOpen" class="w-4 h-4" />
+                    <Eye v-else class="w-4 h-4" />
+                  </template>
+                </Button>
+                <!-- 同步 -->
+                <Button size="icon" variant="ghost" class="h-8 w-8 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50" @click="handleSyncUserCount(account)" :disabled="syncingAccountId === account.id" title="同步数据">
+                  <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': syncingAccountId === account.id }" />
+                </Button>
+                <!-- 封号 -->
+                <Button size="icon" variant="ghost" class="h-8 w-8 rounded-lg" :class="account.isBanned ? 'text-red-600 bg-red-50' : 'text-gray-400 hover:text-red-600 hover:bg-red-50'" @click="handleBanAccount(account)" :disabled="account.isBanned || banningAccountId === account.id" :title="account.isBanned ? '已封号' : '标记为封号'">
+                  <span v-if="banningAccountId === account.id" class="animate-spin">⏳</span>
+                  <Ban v-else class="w-4 h-4" />
+                </Button>
+                <!-- 复制 Access Token -->
+                <Button size="icon" variant="ghost" class="h-8 w-8 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50" @click="copyAccountToken(account)" title="复制 Access Token">
+                  <Copy class="w-4 h-4" />
+                </Button>
+                <!-- 复制 Refresh Token -->
+                <Button v-if="account.refreshToken" size="icon" variant="ghost" class="h-8 w-8 rounded-lg text-gray-400 hover:text-purple-600 hover:bg-purple-50" @click="copyAccountRefreshToken(account)" title="复制 Refresh Token">
+                  <KeyRound class="w-4 h-4" />
+                </Button>
+                <!-- 编辑 -->
+                <Button size="icon" variant="ghost" class="h-8 w-8 rounded-lg text-gray-400 hover:text-gray-900 hover:bg-gray-100" @click="openEditDialog(account)" title="编辑">
+                  <FilePenLine class="w-4 h-4" />
+                </Button>
+                <!-- 删除 -->
+                <Button size="icon" variant="ghost" class="h-8 w-8 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50" @click="handleDelete(account.id)" title="删除">
+                  <Trash2 class="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Mobile Card List -->
         <div class="md:hidden p-4 space-y-4 bg-gray-50/50">
           <div v-for="account in accounts" :key="account.id" class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
@@ -1513,7 +2154,14 @@ const handleInviteSubmit = async () => {
                  <div class="w-10 h-10 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center text-sm font-bold text-gray-600">
 	                    {{ account.email.charAt(0).toUpperCase() }}
                  </div>
-                 <div>
+                 <div
+                    class="cursor-pointer text-left rounded-lg transition-colors hover:bg-blue-50/60 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    :title="copyEmailTitlePrefix + account.email"
+                    tabindex="0"
+                    @click="copyAccountEmail(account)"
+                    @keydown.enter.prevent="copyAccountEmail(account)"
+                    @keydown.space.prevent="copyAccountEmail(account)"
+                  >
                     <p class="text-sm font-bold break-all" :class="account.isBanned ? 'text-red-600' : 'text-gray-900'">{{ account.email }}</p>
                     <div class="mt-1 flex flex-wrap items-center gap-2">
                       <p class="text-xs text-blue-500 font-medium">#{{ account.id }}</p>
@@ -1538,15 +2186,9 @@ const handleInviteSubmit = async () => {
               </div>
 	            </div>
 
-            <div class="grid grid-cols-2 gap-4 text-xs text-gray-500 mb-4 bg-gray-50/50 p-3 rounded-xl">
-          <div>
-                  <p class="mb-1 text-gray-400">过期时间</p>
-                  <p class="font-mono text-gray-700">{{ account.expireAt || '-' }}</p>
-               </div>
-               <div>
-                  <p class="mb-1 text-gray-400">创建时间</p>
-                  <p class="text-gray-700">{{ formatShanghaiDate(account.createdAt, dateFormatOptions).split(' ')[0] }}</p>
-               </div>
+            <div v-if="account.expireAt" class="text-xs text-gray-500 mb-4 bg-gray-50/50 p-3 rounded-xl">
+              <p class="mb-1 text-gray-400">过期时间</p>
+              <p class="font-mono text-gray-700">{{ account.expireAt }}</p>
             </div>
 
             <div class="flex items-center justify-between gap-2 pt-2 border-t border-gray-50">
@@ -1575,7 +2217,28 @@ const handleInviteSubmit = async () => {
                   <Button size="icon" variant="ghost" class="h-9 w-9 text-gray-400" @click="handleSyncUserCount(account)">
                      <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': syncingAccountId === account.id }" />
                   </Button>
-                  <Button size="icon" variant="ghost" class="h-9 w-9 text-gray-400"@click="openEditDialog(account)">
+                  <!-- Copy Access Token -->
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    class="h-9 w-9 text-gray-400 hover:text-blue-600 hover:bg-blue-50"
+                    @click="copyAccountToken(account)"
+                    title="复制 Access Token"
+                  >
+                    <Copy class="w-4 h-4" />
+                  </Button>
+                  <!-- Copy Refresh Token -->
+                  <Button
+                    v-if="account.refreshToken"
+                    size="icon"
+                    variant="ghost"
+                    class="h-9 w-9 text-gray-400 hover:text-purple-600 hover:bg-purple-50"
+                    @click="copyAccountRefreshToken(account)"
+                    title="复制 Refresh Token"
+                  >
+                    <KeyRound class="w-4 h-4" />
+                  </Button>
+                  <Button size="icon" variant="ghost" class="h-9 w-9 text-gray-400" @click="openEditDialog(account)">
                      <FilePenLine class="w-4 h-4" />
                   </Button>
                   <Button
@@ -1599,10 +2262,40 @@ const handleInviteSubmit = async () => {
         </div>
 
         <!-- Footer -->
-        <div class="flex items-center justify-between border-t border-gray-100 px-6 py-4 text-sm text-gray-500 bg-gray-50/30">
-          <p>
-            第 {{ paginationMeta.page }} / {{ totalPages }} 页，共 {{ paginationMeta.total }} 个账号
-          </p>
+        <div class="flex flex-col gap-3 border-t border-gray-100 px-6 py-4 text-sm text-gray-500 bg-gray-50/30 lg:flex-row lg:items-center lg:justify-between">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <p>
+              Page {{ paginationMeta.page }} / {{ totalPages }} · Total {{ paginationMeta.total }}
+            </p>
+            <div class="flex flex-wrap items-center gap-2">
+              <div class="flex items-center gap-2">
+                <span class="text-gray-400">Page</span>
+                <Select :model-value="String(paginationMeta.page)" @update:model-value="handlePageSelect">
+                  <SelectTrigger class="h-8 w-[92px] rounded-lg border-gray-200 bg-white">
+                    <SelectValue placeholder="Page" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="page in pageNumberOptions" :key="page" :value="page">
+                      Page {{ page }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-gray-400">Rows</span>
+                <Select :model-value="String(paginationMeta.pageSize)" @update:model-value="handlePageSizeChange">
+                  <SelectTrigger class="h-8 w-[110px] rounded-lg border-gray-200 bg-white">
+                    <SelectValue placeholder="Rows" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="size in pageSizeOptions" :key="size" :value="size">
+                      {{ size }} / page
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
           <div class="flex items-center gap-2">
             <Button
               size="sm"
@@ -1611,7 +2304,7 @@ const handleInviteSubmit = async () => {
               :disabled="paginationMeta.page === 1"
               @click="goToPage(paginationMeta.page - 1)"
             >
-              上一页
+              Prev
             </Button>
             <Button
               size="sm"
@@ -1620,7 +2313,7 @@ const handleInviteSubmit = async () => {
               :disabled="paginationMeta.page >= totalPages"
               @click="goToPage(paginationMeta.page + 1)"
             >
-              下一页
+              Next
             </Button>
           </div>
         </div>
@@ -1634,9 +2327,65 @@ const handleInviteSubmit = async () => {
           <DialogTitle class="text-2xl font-bold text-gray-900">
             {{ editingAccount ? '编辑账号' : '新建账号' }}
           </DialogTitle>
+          <!-- 新建模式：切换标签 -->
+          <div v-if="!editingAccount" class="flex gap-1 mt-3 p-1 bg-gray-100 rounded-xl">
+            <button
+              type="button"
+              class="flex-1 py-1.5 px-3 rounded-lg text-sm font-medium transition-all"
+              :class="dialogMode === 'manual'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'"
+              @click="dialogMode = 'manual'; quickAddError = ''"
+            >
+              手动填写
+            </button>
+            <button
+              type="button"
+              class="flex-1 py-1.5 px-3 rounded-lg text-sm font-medium transition-all"
+              :class="dialogMode === 'refresh-token'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'"
+              @click="dialogMode = 'refresh-token'; checkAccessTokenError = ''"
+            >
+              Refresh Token 快速添加
+            </button>
+          </div>
         </DialogHeader>
-        
-        <form @submit.prevent="handleSubmit" class="flex-1 min-h-0 flex flex-col">
+
+        <!-- Refresh Token 快速添加模式 -->
+        <div v-if="!editingAccount && dialogMode === 'refresh-token'" class="flex-1 min-h-0 flex flex-col">
+          <div class="flex-1 min-h-0 px-8 pb-6 space-y-4 overflow-y-auto">
+            <div class="space-y-2">
+              <Label class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Refresh Token</Label>
+              <textarea
+                v-model="quickRefreshToken"
+                rows="5"
+                placeholder="粘贴从 OpenAI 获取的 Refresh Token..."
+                class="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all resize-none"
+                :disabled="quickAddLoading"
+              ></textarea>
+              <p class="text-xs text-gray-400">输入 Refresh Token 后，系统将自动换取 Access Token 并获取邮箱和账号类型信息。</p>
+            </div>
+            <div v-if="quickAddError" class="flex items-start gap-2 rounded-xl bg-red-50 border border-red-100 p-3">
+              <span class="text-red-500 text-xs leading-relaxed">{{ quickAddError }}</span>
+            </div>
+          </div>
+          <div class="px-8 pb-8 pt-2 flex gap-3 justify-end shrink-0">
+            <Button type="button" variant="outline" class="rounded-xl" @click="closeDialog">取消</Button>
+            <Button
+              type="button"
+              class="rounded-xl bg-black hover:bg-gray-800 text-white"
+              :disabled="quickAddLoading || !quickRefreshToken.trim()"
+              @click="handleQuickAddByRefreshToken"
+            >
+              <span v-if="quickAddLoading" class="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full mr-2"></span>
+              {{ quickAddLoading ? '添加中...' : '添加账号' }}
+            </Button>
+          </div>
+        </div>
+
+        <!-- 手动填写模式 -->
+        <form v-if="editingAccount || dialogMode === 'manual'" @submit.prevent="handleSubmit" class="flex-1 min-h-0 flex flex-col">
            <div class="flex-1 min-h-0 px-8 pb-6 space-y-4 overflow-y-auto">
               <div class="space-y-2">
                 <Label class="text-xs font-semibold text-gray-500 uppercase tracking-wider">邮箱</Label>
@@ -1815,8 +2564,7 @@ const handleInviteSubmit = async () => {
                           <Input
                             id="chatgpt-account-id-input"
                             v-model="formData.chatgptAccountId"
-                            required
-                            placeholder="必填"
+                            placeholder="可选（Free 账号可留空）"
                             :list="checkedChatgptAccounts.length ? 'chatgpt-account-id-options' : undefined"
                             class="h-11 flex-1 bg-gray-50 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all font-mono text-sm"
                           />
@@ -1981,6 +2729,23 @@ const handleInviteSubmit = async () => {
               </div>
             </div>
 
+            <!-- 账号类型分布 -->
+            <div class="flex flex-wrap items-center gap-3 text-sm text-gray-600">
+              <span class="font-medium text-gray-500">账号类型：</span>
+              <span v-if="planTypeSummary.team" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 text-xs font-semibold">
+                Team <span class="font-bold">{{ planTypeSummary.team }}</span>
+              </span>
+              <span v-if="planTypeSummary.plus" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-100 text-xs font-semibold">
+                Plus <span class="font-bold">{{ planTypeSummary.plus }}</span>
+              </span>
+              <span v-if="planTypeSummary.free" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-100 text-gray-600 border border-gray-200 text-xs font-semibold">
+                Free <span class="font-bold">{{ planTypeSummary.free }}</span>
+              </span>
+              <span v-if="planTypeSummary.unknown" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-yellow-50 text-yellow-700 border border-yellow-100 text-xs font-semibold">
+                未识别 <span class="font-bold">{{ planTypeSummary.unknown }}</span>
+              </span>
+            </div>
+
             <div class="flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -2039,6 +2804,7 @@ const handleInviteSubmit = async () => {
                     <tr>
                       <th class="px-4 py-3 text-left font-medium">状态</th>
                       <th class="px-4 py-3 text-left font-medium">账号</th>
+                      <th class="px-4 py-3 text-left font-medium">类型</th>
                       <th class="px-4 py-3 text-left font-medium">创建时间</th>
                       <th class="px-4 py-3 text-left font-medium">过期时间</th>
                       <th class="px-4 py-3 text-left font-medium">原因</th>
@@ -2066,6 +2832,20 @@ const handleInviteSubmit = async () => {
                         <div class="font-medium text-gray-900 break-all">{{ item.email }}</div>
                         <div class="text-xs text-gray-400">#{{ item.id }}</div>
                       </td>
+                      <td class="px-4 py-3">
+                        <span
+                          v-if="item.planType"
+                          class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
+                          :class="item.planType === 'team'
+                            ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                            : item.planType === 'plus'
+                              ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                              : 'bg-gray-100 text-gray-600 border border-gray-200'"
+                        >
+                          {{ item.planType }}
+                        </span>
+                        <span v-else class="text-gray-400">-</span>
+                      </td>
                       <td class="px-4 py-3 text-gray-500 font-mono">{{ formatShanghaiDate(item.createdAt, dateFormatOptions) }}</td>
                       <td class="px-4 py-3 text-gray-500 font-mono">{{ item.expireAt || '-' }}</td>
                       <td class="px-4 py-3 text-gray-500">
@@ -2074,7 +2854,7 @@ const handleInviteSubmit = async () => {
                       </td>
                     </tr>
                     <tr v-if="!filteredCheckItems.length">
-                      <td colspan="5" class="px-4 py-8 text-center text-gray-400">暂无数据</td>
+                      <td colspan="6" class="px-4 py-8 text-center text-gray-400">暂无数据</td>
                     </tr>
                   </tbody>
                 </table>
@@ -2290,6 +3070,52 @@ const handleInviteSubmit = async () => {
           <p class="text-sm text-gray-600 font-medium">正在同步成员信息...</p>
         </div>
       </div>
+      </DialogContent>
+    </Dialog>
+
+    <!-- 导入结果对话框 -->
+    <Dialog v-model:open="importResultDialogOpen">
+      <DialogContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle class="text-xl font-bold text-gray-900">导入结果</DialogTitle>
+          <DialogDescription class="text-gray-500">
+            从 Codex_register/output 目录扫描 token JSON 文件导入到账号系统。
+          </DialogDescription>
+        </DialogHeader>
+        <div v-if="importResults" class="space-y-4 py-2">
+          <div class="grid grid-cols-3 gap-3 text-center">
+            <div class="rounded-xl bg-green-50 border border-green-100 p-3">
+              <div class="text-2xl font-bold text-green-600">{{ importResults.success?.length || 0 }}</div>
+              <div class="text-xs text-green-700">新增</div>
+            </div>
+            <div class="rounded-xl bg-blue-50 border border-blue-100 p-3">
+              <div class="text-2xl font-bold text-blue-600">{{ importResults.skipped?.length || 0 }}</div>
+              <div class="text-xs text-blue-700">更新</div>
+            </div>
+            <div class="rounded-xl bg-red-50 border border-red-100 p-3">
+              <div class="text-2xl font-bold text-red-600">{{ importResults.failed?.length || 0 }}</div>
+              <div class="text-xs text-red-700">失败</div>
+            </div>
+          </div>
+          <div v-if="importResults.failed?.length" class="rounded-xl bg-red-50 border border-red-100 p-4">
+            <p class="text-xs font-semibold text-red-800 mb-2">失败详情</p>
+            <div class="max-h-32 overflow-y-auto space-y-1">
+              <div v-for="(f, fi) in importResults.failed" :key="fi" class="text-xs text-red-600">
+                {{ f.file || f.email }}: {{ f.error }}
+              </div>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            class="h-11 rounded-xl border-gray-200 w-full"
+            @click="importResultDialogOpen = false"
+          >
+            关闭
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   </div>

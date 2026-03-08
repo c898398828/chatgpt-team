@@ -19,6 +19,7 @@ import { getZpaySettings, getZpaySettingsFromEnv, invalidateZpaySettingsCache } 
 import { getTurnstileSettings, getTurnstileSettingsFromEnv, invalidateTurnstileSettingsCache } from '../utils/turnstile-settings.js'
 import { getTelegramSettings, getTelegramSettingsFromEnv, invalidateTelegramSettingsCache } from '../utils/telegram-settings.js'
 import { getProxySettings, invalidateProxySettingsCache } from '../utils/proxy-settings.js'
+import { getRegisterSettings, invalidateRegisterSettingsCache, REGISTER_EMAIL_PROVIDER_OPTIONS } from '../utils/register-settings.js'
 import {
   FRONTEND_ADMIN_AVATAR_KEYS,
   FRONTEND_FONT_KEYS,
@@ -971,6 +972,53 @@ router.put('/proxy-settings', async (req, res) => {
     })
   } catch (error) {
     console.error('Update proxy-settings error:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+router.get('/register-settings', async (req, res) => {
+  try {
+    const db = await getDatabase()
+    const settings = await getRegisterSettings(db, { forceRefresh: true })
+
+    res.json({
+      register: {
+        emailProvider: settings.emailProvider,
+        emailProviderStored: Boolean(settings.stored?.emailProvider),
+        emailProviderOptions: settings.options,
+      }
+    })
+  } catch (error) {
+    console.error('Get register-settings error:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+router.put('/register-settings', async (req, res) => {
+  try {
+    const payload = req.body?.register && typeof req.body.register === 'object' ? req.body.register : (req.body || {})
+    const db = await getDatabase()
+    const current = await getRegisterSettings(db, { forceRefresh: true })
+
+    const nextEmailProvider = String(payload.emailProvider ?? current.emailProvider ?? 'mailtm').trim().toLowerCase()
+    if (!REGISTER_EMAIL_PROVIDER_OPTIONS.includes(nextEmailProvider)) {
+      return res.status(400).json({ error: 'Invalid register email provider' })
+    }
+
+    upsertSystemConfigValue(db, 'register_email_provider', nextEmailProvider)
+    saveDatabase()
+    invalidateRegisterSettingsCache()
+
+    const updated = await getRegisterSettings(db, { forceRefresh: true })
+    res.json({
+      register: {
+        emailProvider: updated.emailProvider,
+        emailProviderStored: Boolean(updated.stored?.emailProvider),
+        emailProviderOptions: updated.options,
+      }
+    })
+  } catch (error) {
+    console.error('Update register-settings error:', error)
     res.status(500).json({ error: 'Internal server error' })
   }
 })

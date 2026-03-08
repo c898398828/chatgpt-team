@@ -317,20 +317,18 @@ export async function fetchOpenAiAccountInfo(token, proxy = null) {
     throw new AccountSyncError('未找到关联的 ChatGPT 账号', 404)
   }
 
-	  // Only keep team accounts (for workspace invite/admin operations).
 	  return accountIds
 	    .map(id => {
 	      const acc = accountsMap[id]
 	      return {
 	        accountId: id,
-	        name: acc?.account?.name || 'Unnamed Team',
+	        name: acc?.account?.name || (acc?.account?.plan_type === 'team' ? 'Unnamed Team' : 'Personal'),
 	        planType: acc?.account?.plan_type || null,
 	        expiresAt: acc?.entitlement?.expires_at || null,
 	        hasActiveSubscription: !!acc?.entitlement?.has_active_subscription,
 	        isDemoted: false
 	      }
 	    })
-	    .filter(acc => acc.planType === 'team')
 }
 
 const throwChatgptApiStatusError = async ({ status, errorText, logContext, label }) => {

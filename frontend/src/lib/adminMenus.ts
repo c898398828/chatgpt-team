@@ -12,7 +12,8 @@ import {
   Ticket,
   Package,
   Train,
-  Settings
+  Settings,
+  UserPlus,
 } from 'lucide-vue-next'
 
 export interface AdminMenuNode {
@@ -58,12 +59,14 @@ const ICONS_BY_MENU_KEY: Record<string, any> = {
   permission_management: Shield,
   role_management: Users,
   menu_management: Menu,
+  batch_register: UserPlus,
 }
 
 const FALLBACK_ADMIN_MENU_TREE: AdminMenuDraftNode[] = [
   { key: 'stats', path: '/admin/stats', label: '数据统计' },
   { key: 'user_info', path: '/admin/user-info', label: '用户信息' },
   { key: 'accounts', path: '/admin/accounts', label: '账号管理' },
+  { key: 'batch_register', path: '/admin/batch-register', label: '批量注册' },
   { key: 'redemption_codes', path: '/admin/redemption-codes', label: '兑换码管理' },
   {
     key: 'order_management',

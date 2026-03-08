@@ -341,6 +341,17 @@ export interface PointsRedeemInviteUnlockResponse {
   }
 }
 
+export interface CodexQuota {
+  codex_5h_used_percent?: number
+  codex_5h_reset_after_seconds?: number
+  codex_5h_window_minutes?: number
+  codex_7d_used_percent?: number
+  codex_7d_reset_after_seconds?: number
+  codex_7d_window_minutes?: number
+  is_forbidden?: boolean
+  quota_fetched_at?: number
+}
+
 export interface GptAccount {
   id: number
   email: string
@@ -354,9 +365,11 @@ export interface GptAccount {
   isBanned?: boolean
   chatgptAccountId?: string
   oaiDeviceId?: string
+  planType?: string | null
   expireAt?: string | null
   createdAt: string
   updatedAt: string
+  quota?: CodexQuota | null
 }
 
 export interface CreateGptAccountDto {
@@ -367,7 +380,7 @@ export interface CreateGptAccountDto {
   /** @deprecated 降级账号概念已移除；该字段仅保留用于兼容历史客户端（会被忽略）。 */
   isDemoted?: boolean
   isBanned?: boolean
-  chatgptAccountId: string
+  chatgptAccountId?: string
   oaiDeviceId?: string
   expireAt?: string
 }
@@ -448,6 +461,7 @@ export interface CheckAccountStatusItem {
   status: AccountStatus
   reason?: string | null
   refreshed?: boolean
+  planType?: string | null
 }
 
 export interface CheckAccountStatusResponse {
@@ -1018,6 +1032,14 @@ export interface AdminProxySettingsResponse {
   }
 }
 
+export interface AdminRegisterSettingsResponse {
+  register: {
+    emailProvider: string
+    emailProviderStored?: boolean
+    emailProviderOptions?: string[]
+  }
+}
+
 export interface AdminFrontendUiSettingsResponse {
   ui: {
     fontKey: string
@@ -1244,6 +1266,20 @@ export const adminService = {
     return response.data
   },
 
+  async getRegisterSettings(): Promise<AdminRegisterSettingsResponse> {
+    const response = await api.get('/admin/register-settings')
+    return response.data
+  },
+
+  async updateRegisterSettings(payload: {
+    register: {
+      emailProvider: string
+    }
+  }): Promise<AdminRegisterSettingsResponse> {
+    const response = await api.put('/admin/register-settings', payload)
+    return response.data
+  },
+
   async getFrontendUiSettings(): Promise<AdminFrontendUiSettingsResponse> {
     const response = await api.get('/admin/frontend-ui-settings')
     return response.data
@@ -1252,6 +1288,7 @@ export const adminService = {
   async updateFrontendUiSettings(payload: {
     ui: {
       fontKey: string
+      adminAvatarKey?: string
     }
   }): Promise<AdminFrontendUiSettingsResponse> {
     const response = await api.put('/admin/frontend-ui-settings', payload)
@@ -1423,6 +1460,47 @@ export const adminService = {
 
   async deletePurchaseProduct(productKey: string): Promise<{ product: PurchaseProduct }> {
     const response = await api.delete(`/admin/purchase-products/${encodeURIComponent(productKey)}`)
+    return response.data
+  },
+
+  // 批量注册 API
+  async startBatchRegister(payload: { threads?: number; once?: boolean; targetCount?: number }): Promise<{ ok: boolean; msg?: string }> {
+    const response = await api.post('/admin/batch-register/start', payload)
+    return response.data
+  },
+
+  async stopBatchRegister(): Promise<{ ok: boolean; msg?: string }> {
+    const response = await api.post('/admin/batch-register/stop')
+    return response.data
+  },
+
+  async getBatchRegisterStatus(): Promise<{ running: boolean; successCount: number; failCount: number; elapsed: number; threads?: number; targetCount?: number; provider?: string; proxy?: string }> {
+    const response = await api.get('/admin/batch-register/status')
+    return response.data
+  },
+
+  async getBatchRegisterLogs(since?: number): Promise<{ logs: Array<{ time: string; msg: string }>; total: number }> {
+    const response = await api.get('/admin/batch-register/logs', { params: { since } })
+    return response.data
+  },
+
+  async getBatchRegisterConfig(): Promise<{ config: any; system?: { proxyUrl?: string; emailProvider?: string; emailProviderOptions?: string[] } }> {
+    const response = await api.get('/admin/batch-register/config')
+    return response.data
+  },
+
+  async updateBatchRegisterConfig(payload: any): Promise<{ config: any; system?: { proxyUrl?: string; emailProvider?: string; emailProviderOptions?: string[] } }> {
+    const response = await api.put('/admin/batch-register/config', payload)
+    return response.data
+  },
+
+  async getBatchRegisterAccounts(): Promise<{ accounts: any[]; total: number }> {
+    const response = await api.get('/admin/batch-register/accounts')
+    return response.data
+  },
+
+  async importAccountsToSystem(payload?: Record<string, unknown>): Promise<{ success: any[]; failed: any[]; skipped: any[]; total: number; message?: string }> {
+    const response = await api.post('/admin/batch-register/accounts/import-to-system', payload || {})
     return response.data
   },
 }
@@ -1634,6 +1712,8 @@ export interface GptAccountsListParams {
   pageSize?: number
   search?: string
   openStatus?: 'open' | 'closed'
+  planType?: 'team' | 'plus' | 'free'
+  accountStatus?: 'normal' | 'expired' | 'banned'
 }
 
 export interface GptAccountsListResponse {
@@ -1668,6 +1748,11 @@ export const gptAccountService = {
 
   async delete(id: number): Promise<void> {
     await api.delete(`/gpt-accounts/${id}`)
+  },
+
+  async batchDelete(ids: number[]): Promise<{ message: string; deleted: number }> {
+    const response = await api.post('/gpt-accounts/batch-delete', { ids })
+    return response.data
   },
 
   async checkAccessToken(token: string): Promise<CheckGptAccessTokenResponse> {
@@ -1719,6 +1804,16 @@ export const gptAccountService = {
 
   async getInvites(accountId: number, params?: { offset?: number; limit?: number; query?: string }): Promise<ChatgptAccountInvitesResponse> {
     const response = await api.get(`/gpt-accounts/${accountId}/invites`, { params })
+    return response.data
+  },
+
+  async loginByRefreshToken(refreshToken: string): Promise<{ account: GptAccount; updated: boolean; message: string }> {
+    const response = await api.post('/gpt-accounts/login-by-refresh-token', { refreshToken })
+    return response.data
+  },
+
+  async fetchQuota(id: number): Promise<{ quota: CodexQuota }> {
+    const response = await api.post(`/gpt-accounts/${id}/fetch-quota`)
     return response.data
   }
 }

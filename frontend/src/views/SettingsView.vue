@@ -231,6 +231,12 @@ const chatgptProxyUrlStored = ref(false)
 const proxyError = ref('')
 const proxySuccess = ref('')
 const proxyLoading = ref(false)
+const registerEmailProvider = ref('mailtm')
+const registerEmailProviderStored = ref(false)
+const registerEmailProviderOptions = ref<string[]>(['mailtm'])
+const registerSettingsError = ref('')
+const registerSettingsSuccess = ref('')
+const registerSettingsLoading = ref(false)
 const frontendFontKey = ref<FrontendFontKey>('system')
 const frontendFontStored = ref(false)
 const frontendAdminAvatarKey = ref<FrontendAdminAvatarKey>('default')
@@ -259,6 +265,7 @@ onMounted(async () => {
     loadTurnstileSettings(),
     loadTelegramSettings(),
     loadProxySettings(),
+    loadRegisterSettings(),
     loadFrontendUiSettings(),
   ])
 })
@@ -995,6 +1002,45 @@ const saveProxySettings = async () => {
     proxyError.value = err.response?.data?.error || '保存失败'
   } finally {
     proxyLoading.value = false
+  }
+}
+
+const loadRegisterSettings = async () => {
+  registerSettingsError.value = ''
+  registerSettingsSuccess.value = ''
+  try {
+    const response = await adminService.getRegisterSettings()
+    registerEmailProvider.value = response.register?.emailProvider || 'mailtm'
+    registerEmailProviderStored.value = Boolean(response.register?.emailProviderStored)
+    registerEmailProviderOptions.value = response.register?.emailProviderOptions?.length
+      ? response.register.emailProviderOptions
+      : ['mailtm']
+  } catch (err: any) {
+    registerSettingsError.value = err.response?.data?.error || '加载注册邮箱配置失败'
+  }
+}
+
+const saveRegisterSettings = async () => {
+  registerSettingsError.value = ''
+  registerSettingsSuccess.value = ''
+  registerSettingsLoading.value = true
+  try {
+    const response = await adminService.updateRegisterSettings({
+      register: {
+        emailProvider: registerEmailProvider.value,
+      }
+    })
+    registerEmailProvider.value = response.register?.emailProvider || 'mailtm'
+    registerEmailProviderStored.value = Boolean(response.register?.emailProviderStored)
+    registerEmailProviderOptions.value = response.register?.emailProviderOptions?.length
+      ? response.register.emailProviderOptions
+      : ['mailtm']
+    registerSettingsSuccess.value = '已保存注册邮箱配置'
+    setTimeout(() => (registerSettingsSuccess.value = ''), 3000)
+  } catch (err: any) {
+    registerSettingsError.value = err.response?.data?.error || '保存失败'
+  } finally {
+    registerSettingsLoading.value = false
   }
 }
 
@@ -2480,6 +2526,60 @@ const savePointsWithdrawSettings = async () => {
         </CardContent>
       </Card>
 
+
+      <Card v-if="isSuperAdmin" class="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden flex flex-col lg:col-span-2">
+        <CardHeader class="border-b border-gray-50 bg-gray-50/30 px-6 py-5 sm:px-8 sm:py-6">
+          <CardTitle class="text-xl font-bold text-gray-900">&#27880;&#20876;&#37038;&#31665;&#37197;&#32622;</CardTitle>
+          <CardDescription class="text-gray-500">&#25209;&#37327;&#27880;&#20876;&#20351;&#29992;&#30340;&#37038;&#31665;&#28304;&#22312;&#36825;&#37324;&#32479;&#19968;&#32500;&#25252;&#65292;&#25209;&#37327;&#27880;&#20876;&#39029;&#38754;&#30452;&#25509;&#35835;&#21462;&#26412;&#37197;&#32622;&#12290;</CardDescription>
+        </CardHeader>
+        <CardContent class="p-6 sm:p-8 space-y-6 flex-1">
+          <div class="space-y-2">
+            <Label class="text-xs font-semibold text-gray-500 uppercase tracking-wider">&#37038;&#31665;&#25552;&#20379;&#21830;</Label>
+            <select
+              v-model="registerEmailProvider"
+              class="h-11 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 text-sm text-gray-900 outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              :disabled="registerSettingsLoading"
+            >
+              <option v-for="option in registerEmailProviderOptions" :key="option" :value="option">
+                {{ option === 'mailtm' ? 'Mail.tm' : option }}
+              </option>
+            </select>
+            <p class="text-xs text-gray-400">
+              <template v-if="registerEmailProviderStored">&#24403;&#21069;&#37197;&#32622;&#24050;&#20889;&#20837;&#25968;&#25454;&#24211;&#65292;&#25209;&#37327;&#27880;&#20876;&#20219;&#21153;&#20250;&#30452;&#25509;&#35835;&#21462;&#12290;</template>
+              <template v-else>&#24403;&#21069;&#20351;&#29992;&#40664;&#35748;&#20540;&#65307;&#20445;&#23384;&#21518;&#20250;&#20889;&#20837;&#31995;&#32479;&#37197;&#32622;&#12290;</template>
+            </p>
+          </div>
+
+          <div v-if="registerSettingsError" class="rounded-xl bg-red-50 p-4 text-red-600 border border-red-100 text-sm font-medium">
+            {{ registerSettingsError }}
+          </div>
+
+          <div v-if="registerSettingsSuccess" class="rounded-xl bg-green-50 p-4 text-green-600 border border-green-100 text-sm font-medium">
+            {{ registerSettingsSuccess }}
+          </div>
+
+          <div class="flex flex-col sm:flex-row gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              class="w-full sm:w-auto h-11 rounded-xl"
+              :disabled="registerSettingsLoading"
+              @click="loadRegisterSettings"
+            >
+              &#21047;&#26032;
+            </Button>
+            <Button
+              type="button"
+              class="w-full sm:flex-1 h-11 rounded-xl bg-black hover:bg-gray-800 text-white shadow-lg shadow-black/5"
+              :disabled="registerSettingsLoading"
+              @click="saveRegisterSettings"
+            >
+              <span v-if="registerSettingsLoading">&#20445;&#23384;&#20013;...</span>
+              <span v-else>&#20445;&#23384;&#27880;&#20876;&#37038;&#31665;&#37197;&#32622;</span>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
       <!-- 积分提现设置 -->
       <Card v-if="isSuperAdmin" class="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden flex flex-col lg:col-span-2">
 	          <CardHeader class="border-b border-gray-50 bg-gray-50/30 px-6 py-5 sm:px-8 sm:py-6">
