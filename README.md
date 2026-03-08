@@ -8,6 +8,7 @@
 <img width="1649" height="876" alt="image" src="https://github.com/user-attachments/assets/ed35210e-c9c3-40d9-bafd-0e51b0bbcdb0" />
 <img width="1920" height="928" alt="Snipaste_2026-03-07_23-37-51" src="https://github.com/user-attachments/assets/fa54cff2-b352-414c-9dfa-55e1a5f35cd0" />
 <img width="1920" height="928" alt="Snipaste_2026-03-07_23-39-20" src="https://github.com/user-attachments/assets/f6242a08-84cb-4701-ac5f-b54a7d20f7b3" />
+<img width="1920" height="928" alt="image" src="https://github.com/user-attachments/assets/e649ed17-78e2-4dd2-b359-bebacd9ab282" />
 <img width="1920" height="928" alt="Snipaste_2026-03-07_23-38-20" src="https://github.com/user-attachments/assets/b29d2805-4c68-4d5e-86fb-bf66c1d0f193" />
 
 ## 功能特性
