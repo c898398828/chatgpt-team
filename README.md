@@ -1,5 +1,5 @@
-# ChatGPT Team Helper
-[![Telegram 交流群](https://img.shields.io/badge/Telegram-交流群-blue?logo=telegram)](https://t.me/+W7iplSdBGXhlMDc1)
+# ChatGPT Team
+
 [![Linux DO](https://img.shields.io/badge/Linux%20DO-Yelo-green?logo=discourse)](https://linux.do/u/yelo/summary)
 <img width="1920" height="928" alt="Snipaste_2026-03-07_23-38-20" src="https://github.com/user-attachments/assets/029498bf-391c-44b5-9167-cfda54420b68" />
 
